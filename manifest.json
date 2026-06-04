@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Instagram Auto Clicker",
+  "version": "1.0",
+  "description": "인스타그램 특정 버튼을 자동 클릭하는 테스트용 확장 프로그램",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "devtools_page": "devtools.html",
+  "action": {
+    "default_title": "클릭하여 매크로 실행"
+  }
+}

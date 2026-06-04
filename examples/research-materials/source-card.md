@@ -1,0 +1,24 @@
+# Source card: agent memory design
+
+- Title: Agent memory design overview
+- URL: `<source URL>`
+- Source type:
+  - official-doc
+- Date published:
+- Date checked: 2026-05-31
+- Author/org: `<author or org>`
+- Trust level:
+  - official
+- Summary:
+  - Describes short-term and long-term memory concepts for agent applications.
+- Relevant claims:
+  - Stable instructions, runtime session state, and long-term facts need distinct storage layers.
+  - Runtime memory should be owned by the application framework or SDK.
+- Project relevance:
+  - Helps decide where `AGENTS.md`, `HANDOFF`, `PROJECT_MEMORY`, and runtime memory belong.
+- Adoption mode:
+  - concept-only
+- Risks:
+  - Concepts may not map directly to repository documentation.
+- Follow-up:
+  - Compare with official SDK session/state docs before implementation.

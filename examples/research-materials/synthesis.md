@@ -1,0 +1,22 @@
+# Synthesis: avoiding agent amnesia
+
+- Theme: Avoiding agent amnesia
+- Sources:
+  - Codex AGENTS.md docs
+  - Claude memory docs
+  - OpenAI conversation/session docs
+  - agent memory framework docs
+- Repeated pattern:
+  - Stable project knowledge needs durable files; runtime memory belongs to app frameworks.
+- Decision:
+  - Add session-continuity guidance and an optional `PROJECT_MEMORY` template.
+- Kit change:
+  - recipe/example/template update
+- Files changed:
+  - `recipes/session-continuity.md`
+  - `templates/optional/PROJECT_MEMORY.md`
+  - `examples/session-continuity/`
+- Dogfood evidence:
+  - `<reports/... or none yet>`
+- Revisit trigger:
+  - repeated dogfood reports showing handoff or memory confusion

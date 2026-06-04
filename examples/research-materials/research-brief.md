@@ -1,0 +1,23 @@
+# Research brief: session continuity for coding agents
+
+- Topic: Session continuity for coding agents
+- Question: How should project state survive new sessions and compaction?
+- Sources reviewed:
+  - Codex AGENTS.md docs
+  - Claude memory docs
+  - OpenAI Agents SDK sessions
+  - LangGraph memory overview
+- Key findings:
+  - stable instructions belong in canonical docs
+  - session state belongs in handoff
+  - runtime memory belongs in SDK/framework
+  - research belongs in research/
+- Conflicts / uncertainty:
+  - Harness-specific memory behavior changes over time.
+- Recommended decision:
+  - Add a session-continuity recipe and optional project memory template.
+- Applied to:
+  - recipe
+  - example
+  - template
+- Review date:
