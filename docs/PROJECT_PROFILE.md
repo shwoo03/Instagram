@@ -79,3 +79,17 @@ The project does not currently need:
 
 Add any of these only after a project-specific reason, owner, security boundary,
 and rollback path are recorded.
+
+## 2026-06-06 Harness Stabilization Update
+
+- Runtime policy is now accuracy-first auto-assist: DevTools Network capture is preferred, page-network bridge can auto-enable when DevTools is not connected, and DOM-only output is treated as `DOM_PREVIEW`.
+- Repo-local `.agents/skills/instagram-accuracy-debugging` and `.agents/subagents` are intentionally adopted for repeated Instagram accuracy/debugging work.
+- These agent surfaces are documentation and workflow aids only. They do not add runtime permissions, background automation, global Codex behavior, or secret storage.
+- Final diff must be based on confirmed compare sets. Raw DOM overcount remains visible through diagnostics and `excludedFromCompare` instead of being reported as a high-confidence diff.
+
+## Regression Policy: Evidence, Not Usernames
+
+- Accuracy fixes must be rule-based. Do not add username-specific exceptions.
+- Network-confirmed evidence is the preferred compare source; DOM is a fallback and diagnostic layer.
+- DOM candidates can explain UI/network disagreement, but they are not final diff members unless bounded fallback promotion is needed to satisfy a count shortfall.
+- Runtime diagnostics should make final results visually distinct from raw/provenance/candidate data.

@@ -72,3 +72,10 @@ automation for this extension by default. If one becomes necessary, document:
 Allowed runtime storage should be limited to derived result snapshots and
 diagnostics. Do not persist raw DevTools response bodies, cookies, request
 headers, auth state, private messages, or unrelated profile data.
+
+## 2026-06-06 Privacy and Harness Notes
+
+- Current extension permissions include `activeTab`, `scripting`, and `storage`; keep any future permission additions justified by a concrete collection/debugging need.
+- DevTools capture and page-network bridge must continue to discard raw payloads after extracting derived usernames/counts/diagnostics.
+- Auto-assist may enable page-network bridge when DevTools is not connected, but it must not store cookies, auth headers, full request headers, private messages, or raw API responses.
+- Repo-local `.agents` skill/subagent files are allowed as non-runtime harness documentation. They must not become hidden automation that changes browser state or stores sensitive Instagram data.

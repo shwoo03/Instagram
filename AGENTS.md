@@ -65,3 +65,22 @@ Manual browser check:
 4. Click the extension action to inject `main.js`.
 5. Confirm the page console prints DevTools bridge status.
 6. Open followers/following lists and confirm collection counts and partial warnings are readable.
+
+## Accuracy-first Work Order
+
+- Start with source status, not DOM tweaks: check DevTools, Page Network Bridge, DOM, expected counts, and overcount exclusions before changing selectors.
+- Prefer confidence in this order: `DEVTOOLS_ASSISTED`, `PAGE_NETWORK_ASSISTED`, then `DOM_PREVIEW`.
+- If DevTools is missing, the runtime may auto-enable the page-network bridge. Treat that as assisted evidence, not the same confidence level as DevTools Network capture.
+- If no confirmed network payload exists, label results as preview/provisional and keep DOM-only overcount out of the final compare set.
+- For suspected false positives, inspect `window.__igFollowerExplainUser("username")` before changing collection logic.
+
+## Regression Guardrails from 2026-06-06 Debugging
+
+- Never hard-code usernames to fix accuracy. If a user appears wrong, fix the evidence rule that classified them.
+- Once DevTools or page-network confirmed payload exists for a list, new DOM-only usernames must not be promoted directly into the confirmed compare set.
+- DOM-only usernames after network confirmation should stay as `dom-candidate` unless confirmed collection is short of the expected UI count.
+- If confirmed collection is short, promote DOM candidates only as a bounded fallback up to the missing expected-count gap, and label the source as fallback evidence.
+- Do not reset a list set after network payloads may already have populated it. Late resets can erase valid DevTools evidence.
+- Keep page-network auto-assist off by default unless explicitly re-enabled and validated; unexpected `console.warn` output can create extension error-panel noise.
+- Do not use `console.warn` for expected degraded states such as DevTools not yet connected. Use Korean `console.log` diagnostics and reserve warnings/errors for real failures.
+- Before claiming a run is wrong, check final compare counts and status first: raw/provenance/candidates are diagnostics, not final diff truth.

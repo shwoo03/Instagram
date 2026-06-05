@@ -26,3 +26,19 @@
 - Project-specific runtime bugs live here.
 - Kit/starter-kit improvements live in `dogfood/`.
 - Do not put secrets, raw payloads, cookies, or account-sensitive dumps in backlog entries.
+
+## 2026-06-06 Harness Stabilization Backlog
+
+- Done: add runtime DevTools preflight and page-network auto-assist before list collection.
+- Done: label no-network-evidence runs as `DOM_PREVIEW` instead of presenting DOM-only output as high-confidence.
+- Done: keep raw DOM overcount visible through `excludedFromCompare` while final diff uses confirmed compare sets.
+- Done: document repo-local `.agents` skill/subagent usage for repeated accuracy debugging.
+- Open: manually validate DevTools-open, DevTools-closed, DevTools-connected-no-payload, DOM-overcount, and passive-noise scenarios in Chrome.
+
+## 2026-06-06 Regression Prevention Items
+
+- Done: prevent account-specific filtering by documenting that username hard-coding is forbidden.
+- Done: preserve network-confirmed sets by removing late reset behavior during following collection.
+- Done: downgrade expected preflight/page-network diagnostics from `console.warn` to `console.log` to reduce Chrome extension error-panel noise.
+- Done: add bounded DOM-candidate fallback for short network-confirmed collections instead of unconditional DOM promotion or unconditional DOM blocking.
+- Open: add a small local regression fixture or checklist for the pass shape: DevTools `287/287`, confirmed raw `287/287`, final diff `0/0`, DOM candidates excluded from final compare.

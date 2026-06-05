@@ -75,3 +75,19 @@ Chrome check after reloading the unpacked extension.
 - Ambiguous network usernames are retained as candidates and excluded from final diff.
 - Runtime diagnostics are stored in `window.__igFollowerDebugReport`.
 - Next architecture step: split live collection snapshots, compare-only, and follow-action into separate commands/modes.
+
+## 2026-06-06 Handoff: Accuracy Auto-assist Stabilization
+
+- Implemented DevTools preflight in `main.js`: execution now asks background for DevTools state, waits a short grace window, then auto-enables page-network bridge if DevTools is not connected.
+- `DOM_PREVIEW` is now the default no-network-evidence label. DOM-only output should not be treated as high-confidence final truth.
+- Page-network bridge remains passive by default in `page-network-bridge.js`; it is enabled by manual helper or runtime auto-assist only.
+- Final compare still uses confirmed compare sets and preserves raw DOM overcount through `excludedFromCompare`.
+- Next manual browser validation: reload extension, reload Instagram, test DevTools-open and DevTools-closed flows, then inspect `__igFollowerExplainUser("haeunieii")` and `__igFollowerExplainUser("zerowonil")` if DOM overcount recurs.
+
+## 2026-06-06 Regression Lessons: DOM, DevTools, and Error Panel Noise
+
+- Do not hard-code `haeunieii`, `zerowonil`, or any other username. The fix is source classification, not account-specific filtering.
+- Confirmed network evidence now owns the compare set. DOM-only accounts found after confirmed network evidence are `dom-candidate` unless a bounded fallback is needed to fill an expected-count shortfall.
+- The previous regression came from blocking DOM promotion too aggressively and also resetting `followingUsers` after DevTools had already added the first page. Future changes must preserve already-arrived network evidence.
+- Chrome extension error-panel noise can be caused by expected `console.warn` diagnostics from content scripts. Expected degraded states should use `console.log`; reserve warning/error paths for true failures.
+- Passing run shape: status `completed`, DevTools payload `287/287`, raw confirmed `287/287`, final compare `287/287`, final diff `0/0`, and `haeunieii`/`zerowonil` only as `dom-candidate` diagnostics.

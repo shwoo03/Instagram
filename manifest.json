@@ -1,17 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "Instagram Auto Clicker",
-  "version": "1.0",
-  "description": "인스타그램 특정 버튼을 자동 클릭하는 테스트용 확장 프로그램",
+  "name": "Instagram Follower Comparator",
+  "version": "1.0.7",
+  "description": "인스타그램 팔로워/팔로잉을 수집해 맞팔·미팔로우를 비교하고 결과 신뢰도를 출력하는 확장",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "devtools_page": "devtools.html",
   "action": {
-    "default_title": "클릭하여 매크로 실행"
+    "default_title": "클릭하여 팔로워 비교 실행"
   }
 }

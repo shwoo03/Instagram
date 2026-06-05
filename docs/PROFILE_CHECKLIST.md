@@ -35,3 +35,10 @@ Do not add these by default:
 - [ ] `docs/SECURITY.md` lists allowed and forbidden data.
 - [ ] `docs/BACKLOG.md` keeps extension bugs separate from dogfood lessons.
 - [ ] Manual Chrome validation is run after extension behavior changes.
+
+## 2026-06-06 Harness Surface Decision
+
+- Applied: repo-local accuracy debugging skill at `.agents/skills/instagram-accuracy-debugging/SKILL.md`.
+- Applied: repo-local subagent guidance under `.agents/subagents/` for accuracy policy, runtime review, and debug UX.
+- Still intentionally absent: hooks, MCP servers, eval runners, worktree automation, and hidden global starter-kit scaffolding.
+- Required runtime behavior: DevTools first, page-network auto-assist second, DOM preview/provisional last.
