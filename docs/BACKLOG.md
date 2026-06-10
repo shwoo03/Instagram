@@ -42,3 +42,51 @@
 - Done: downgrade expected preflight/page-network diagnostics from `console.warn` to `console.log` to reduce Chrome extension error-panel noise.
 - Done: add bounded DOM-candidate fallback for short network-confirmed collections instead of unconditional DOM promotion or unconditional DOM blocking.
 - Open: add a small local regression fixture or checklist for the pass shape: DevTools `287/287`, confirmed raw `287/287`, final diff `0/0`, DOM candidates excluded from final compare.
+
+## 2026-06-07 Accuracy Research Backlog
+
+- Done: record official-doc/paper research in `docs/ACCURACY_RESEARCH_2026-06-07.md` and `docs/REFERENCES.md`.
+- Done: make DevTools URL mode detection conservative so broad GraphQL/friendships/followers/following matches are candidate unless exact list endpoint path is observed.
+- Done: restrict DevTools/page-network username extraction to list-like containers instead of accepting every recursive `username` field.
+- Done: demote DOM-only confirmed users to candidates when confirmed network evidence arrives later.
+- Done: add a Korean trust gate to the decision card and expose `window.__igFollowerHelp()`.
+- Done: add stale-run context to `window.__igFollowerExplainUser("username")`.
+- Done: add background DevTools freshness/disconnect/tab cleanup and stricter Instagram hostname gating.
+- Open: add local regression fixtures for exact-network pass, recursive-payload false positive, one-sided DevTools, connected-no-payload, and bounded fallback. `tools/compare-fixtures.mjs` now covers compare integrity, DOM-overcount exclusion, DOM observer tiering, and evidence ranking.
+- Done: rank DOM fallback promotions and overcount exclusions by evidence strength instead of stable sort order (`R10`, `tools/compare-fixtures.mjs`).
+- Open: persist compact `lastEvidence` or bounded `recentEvidence` tail in sanitized session snapshots.
+- Open: compact every large stored snapshot section with explicit limits and `truncated` flags.
+
+## 2026-06-10 Stability/Performance Plan
+
+- Done: S1 active run id/re-entry marker added; dialog/list waits plus collection/reverify/follow loops now exit on superseded runs.
+- Done: S2 `main()` has try/catch/finally partial persistence so unexpected exceptions keep current counts/result context.
+- Done: S3 detached scrollBox/modal-closed style exits added to scroll, reverify, and follow loops.
+- Done: S4 followers fallback target changed from fixed 288 to unknown-target stall mode; `TARGET_COUNT` constant removed.
+- Done: S5 DevTools content-side freshness model and disconnect relay added.
+- Done: S6 paste-mode network hook kept for console paste mode, skipped in extension isolated-world injection mode, and aligned with list-container username extraction.
+- Done: S7 collection/reverify/follow loops have absolute time-cap exits.
+- Done: S8 removed unused `sendToInstagramTab` from `background.js`.
+- Done: P2 source count cache added to avoid repeated provenance-map scans.
+- Done: P3 page-network response prefilter added before JSON parse.
+- Done: P4 DevTools heartbeat backoff added for repeated failures.
+- Done: P5 session message payload compacts provenance before `chrome.runtime.sendMessage` while page memory keeps full provenance.
+- Done: P6 clickable tab candidate scan now uses cheap href/text filtering before visibility checks.
+- Done: P1 scrollBox cache and two-pass scoring added; manual Chrome confirmation still recommended for selected scroll box behavior.
+- Done: P7 walker fixture added at `tools/walker-fixtures.mjs`; static validation passed.
+- Done: static validation passed with `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node --check page-network-bridge.js`, and `node tools/walker-fixtures.mjs`.
+- Open: run the manual Chrome scenarios from `docs/STABILITY_PERF_PLAN_2026-06-10.md`.
+
+Notes on prior 2026-06-07 open items:
+
+- `persist compact lastEvidence` / `compact every large stored snapshot section`: P5 moves the largest provenance payload compaction before session-message transfer, but full truncation flags remain open.
+- `add local regression fixtures`: P7 adds walker drift fixtures only; broader Instagram run fixtures remain open.
+
+## 2026-06-10 Collection Resilience
+
+- Done: R4 aborts the active run on SPA profile changes, prints a Korean partial-result reason, and persists under the starting profile key.
+- Done: R7 resets DevTools per-page counters on `chrome.devtools.network.onNavigated` and relays a Korean page-console notice.
+- Done: R2 observes 429 status codes through DevTools/page-network/paste hooks, pauses scrolling with exponential backoff, and partial-exits after repeated signals without issuing retries.
+- Done: R3 adds MutationObserver row capture and IntersectionObserver list-end diagnostics while keeping observer evidence in the DOM tier.
+- Done: R10 ranks DOM fallback promotion/exclusion by evidence strength and adds `tools/compare-fixtures.mjs`.
+- Open: run the manual Chrome checklist from `docs/COLLECTION_RESILIENCE_PLAN_2026-06-10.md` section 2.

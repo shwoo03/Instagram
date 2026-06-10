@@ -53,6 +53,8 @@ Use these checks when the user asks for validation:
 node --check main.js
 node --check background.js
 node --check devtools.js
+node tools/walker-fixtures.mjs
+node tools/compare-fixtures.mjs
 ```
 
 If validation cannot be run, record why in `docs/HANDOFF.md`.
@@ -84,3 +86,11 @@ Manual browser check:
 - Keep page-network auto-assist off by default unless explicitly re-enabled and validated; unexpected `console.warn` output can create extension error-panel noise.
 - Do not use `console.warn` for expected degraded states such as DevTools not yet connected. Use Korean `console.log` diagnostics and reserve warnings/errors for real failures.
 - Before claiming a run is wrong, check final compare counts and status first: raw/provenance/candidates are diagnostics, not final diff truth.
+
+## Research-backed Guardrails from 2026-06-07
+
+- Treat `DevTools connected` as readiness only. Treat exact followers/following payload capture as evidence.
+- Do not recursively trust every `username` in a JSON payload. Confirm only usernames found through known list-member containers or exact list endpoints; keep the rest candidate-only.
+- When confirmed network evidence arrives after DOM collection, reconcile earlier DOM-only confirmed accounts before final compare.
+- Prefer trust-gate output first: `확정 비교 가능`, `참고용 결과`, or `DevTools 재실행 필요`.
+- For repeated failures, record the research source, adoption/rejection decision, runtime change, and fixture/backlog item together. Research without a decision or regression case is incomplete.

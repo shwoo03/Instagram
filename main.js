@@ -345,6 +345,19 @@
         );
     }
 
+    function compareCandidateEvidence(aInfo, bInfo) {
+        const aSeen = aInfo?.seenCount || 0;
+        const bSeen = bInfo?.seenCount || 0;
+        if (aSeen !== bSeen) return bSeen - aSeen;
+        const aSources = aInfo?.sources?.size ?? (Array.isArray(aInfo?.sources) ? aInfo.sources.length : 0);
+        const bSources = bInfo?.sources?.size ?? (Array.isArray(bInfo?.sources) ? bInfo.sources.length : 0);
+        if (aSources !== bSources) return bSources - aSources;
+        const aLast = aInfo?.lastSeenAt || "";
+        const bLast = bInfo?.lastSeenAt || "";
+        if (aLast !== bLast) return aLast > bLast ? -1 : 1;
+        return 0;
+    }
+
     function promoteDomCandidatesToConfirmed(mode, targetSet, expectedCount, reason = "network-shortfall") {
         if (!targetSet || expectedCount <= 0 || targetSet.size >= expectedCount) return [];
 
@@ -356,7 +369,7 @@
                 const sources = Array.from(info?.sources || []);
                 return sources.some((source) => DOM_CANDIDATE_SOURCES.has(source));
             })
-            .sort();
+            .sort((a, b) => compareCandidateEvidence(bucket?.get(a), bucket?.get(b)) || a.localeCompare(b));
 
         const promoted = [];
         const missing = expectedCount - targetSet.size;
@@ -373,6 +386,14 @@
         if (promoted.length > 0) {
             const label = mode === "following" ? "팔로잉" : "팔로워";
             console.log(`🧩 ${label} DOM 후보 ${promoted.length}명을 부족분 보정으로 승격했습니다. (${targetSet.size}/${expectedCount})`);
+            recordRunEvent("dom_candidates_promoted_ranked", {
+                mode,
+                promoted: promoted.slice(0, 20).map((username) => ({
+                    username,
+                    seenCount: bucket?.get(username)?.seenCount || 0,
+                    sourceCount: bucket?.get(username)?.sources?.size || 0
+                }))
+            });
         }
 
         return promoted;
@@ -2932,11 +2953,10 @@
         return diffs;
     }
 
-    function getOvercountLowConfidenceExclusions(mode, sourceSet, oppositeSet, expectedCount) {
+    function getOvercountLowConfidenceExclusions(mode, sourceSet, oppositeSet, expectedCount, bucket = state.userProvenance[mode]) {
         const overcount = expectedCount > 0 ? sourceSet.size - expectedCount : 0;
         if (overcount <= 0) return new Set();
 
-        const bucket = state.userProvenance[mode];
         const candidates = Array.from(sourceSet)
             .filter((username) => {
                 const info = bucket?.get(username);
@@ -2948,6 +2968,8 @@
                 const aCreatesDiff = oppositeSet.has(a) ? 1 : 0;
                 const bCreatesDiff = oppositeSet.has(b) ? 1 : 0;
                 if (aCreatesDiff !== bCreatesDiff) return aCreatesDiff - bCreatesDiff;
+                const evidence = compareCandidateEvidence(bucket?.get(b), bucket?.get(a));
+                if (evidence !== 0) return evidence;
                 return a.localeCompare(b);
             });
 

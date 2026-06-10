@@ -91,3 +91,46 @@ Chrome check after reloading the unpacked extension.
 - The previous regression came from blocking DOM promotion too aggressively and also resetting `followingUsers` after DevTools had already added the first page. Future changes must preserve already-arrived network evidence.
 - Chrome extension error-panel noise can be caused by expected `console.warn` diagnostics from content scripts. Expected degraded states should use `console.log`; reserve warning/error paths for true failures.
 - Passing run shape: status `completed`, DevTools payload `287/287`, raw confirmed `287/287`, final compare `287/287`, final diff `0/0`, and `haeunieii`/`zerowonil` only as `dom-candidate` diagnostics.
+
+## 2026-06-07 Research-backed Accuracy Hardening
+
+- Saved research and subagent synthesis in `docs/ACCURACY_RESEARCH_2026-06-07.md`.
+- `docs/REFERENCES.md` now records official Chrome docs, DOM observation docs, and web UI flakiness papers used for the current accuracy policy.
+- Runtime changed from broad recursive username promotion toward evidence-gated extraction: exact list endpoint paths and list-like payload containers are preferred; broad GraphQL/friendships matches remain candidate unless explicitly recognized.
+- Confirmed network payload arrival now triggers DOM-only confirmed reconciliation so old DOM observations do not remain final compare truth.
+- Background DevTools state now tracks freshness/disconnect/navigation cleanup to reduce stale `DevTools connected` claims.
+- The page decision card now starts with a Korean trust gate. Use this before interpreting raw/candidate/provenance rows.
+- `__igFollowerHelp()` is the operator command map. `__igFollowerExplainUser("username")` now prints saved/current profile and run freshness context.
+
+Next smallest action: add a local fixture/checklist that proves the 287/287 pass shape, recursive payload false-positive rejection, and bounded fallback behavior without storing private payloads.
+
+## 2026-06-10 Stability/Performance Implementation Pass
+
+- Applied `docs/STABILITY_PERF_PLAN_2026-06-10.md` in order through the repo-local stability/performance pass.
+- Implemented re-entry/superseded guards, `main()` try/catch/finally partial persistence, detached scrollBox exits, followers unknown-count fallback, DevTools freshness/disconnect relay, paste-mode-only XHR/fetch hook behavior, page-network parse prefilter, source count cache, DevTools heartbeat backoff, compact session-message payloads, scrollBox cache/two-pass scoring, clickable candidate prefiltering, and walker fixture scaffolding.
+- Static validation passed: `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node --check page-network-bridge.js`, and `node tools/walker-fixtures.mjs`.
+- Manual Chrome validation has not been run in this pass. Next operator check should follow `docs/STABILITY_PERF_PLAN_2026-06-10.md`: reload unpacked extension, reload Instagram, test DevTools-open and DevTools-closed collection, and inspect trust gate/final compare counts before raw DOM candidates.
+- Known follow-up: broader Instagram run-shape fixtures are still open; `tools/walker-fixtures.mjs` only protects shared JSON username walker drift.
+
+## 2026-06-10 Collection Resilience Implementation Pass
+
+- Implemented `docs/COLLECTION_RESILIENCE_PLAN_2026-06-10.md` in the requested order: R4, R7, R2, R3, R10.
+- R4: active runs now pin `state.runProfile`, detect SPA profile changes in scroll/reverify/stage boundaries, partial-persist with `aborted_profile_changed`, and keep storage/debug report profile labels on the starting profile.
+- R7: DevTools capture now handles `chrome.devtools.network.onNavigated`, resets per-page counters, relays `navigated` status, and records `devtools_capture_navigated` in the run timeline.
+- R2: DevTools/page-network/paste hooks observe HTTP 429 status codes only, never read error bodies, pause scroll collection with 60/120/240s backoff, and partial-exit as `rate_limited` after repeated signals.
+- R3: scroll collection now uses MutationObserver row queues plus IntersectionObserver list-end hints; observer evidence stays DOM-tier (`dom-observer` / `dom-observer-candidate`) and disconnects via `finally`.
+- R10: DOM fallback promotion and low-confidence overcount exclusion are ranked by evidence strength. `tools/compare-fixtures.mjs` covers comparator ordering, compare integrity, DOM observer tiering, and overcount exclusion behavior.
+- Static validation passed after each item with `node --check main.js`, `node --check background.js`, `node --check devtools.js`, and `node tools/walker-fixtures.mjs`. After R10, `node tools/compare-fixtures.mjs` also passed.
+- R10 mutation check: an in-memory comparator mutation (`bSeen - aSeen` -> `aSeen - bSeen`) failed the comparator assertion as expected; source files were not modified for this check.
+
+Manual Chrome validation was not run from this environment because it requires the user's loaded unpacked extension, logged-in Instagram tab, and Chrome DevTools session. Remaining checklist:
+
+1. Reload the unpacked extension from `chrome://extensions`.
+2. Reload the Instagram profile tab and open DevTools before opening followers/following lists.
+3. Click the extension action and confirm DevTools bridge status logs.
+4. Standard pass: confirm trust gate/final compare counts and visible `observerAdded` diagnostics.
+5. Profile change: navigate to another profile during collection and confirm `profile_changed` partial persist under the starting profile key.
+6. onNavigated: reload with DevTools open and confirm DevTools navigated log plus page-console Korean notice.
+7. 429 synthetic signal: during a run, inject `window.postMessage({ source: "ig-page-network-bridge", schemaVersion: 1, type: "IG_PAGE_NETWORK_STATUS", reason: "rate-limited", capturedAt: new Date().toISOString() }, "*");` and confirm 60/120/240s pause behavior, then `rate_limited` partial exit on the fourth non-deduped signal.
+8. DevTools-closed flow: confirm `DOM_PREVIEW` behavior remains unchanged.
+9. Confirm `chrome://extensions` error panel has no new warn/error noise for expected degraded states.

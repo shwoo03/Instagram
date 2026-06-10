@@ -21,6 +21,8 @@ After any change to the three runtime scripts:
 node --check main.js
 node --check background.js
 node --check devtools.js
+node tools/walker-fixtures.mjs
+node tools/compare-fixtures.mjs
 ```
 
 There is no test suite, no bundler, and no lint config — `node --check` is the only automated gate. Real correctness comes from the manual Chrome flow: reload the unpacked extension at `chrome://extensions`, reload the Instagram profile tab, open DevTools **before** opening the followers/following modal, click the extension action, then read the Korean console summary plus the bridge status logs. If validation can't be run, record why in `docs/HANDOFF.md`.
