@@ -4,12 +4,15 @@
 
     const USERNAME_RE = /^[a-zA-Z0-9._]{1,30}$/;
     const FOLLOWERS_URL_RE = /(friendships|followers|following|graphql)/i;
+    const IGNORED_URL_RE = /(edge-chat|mqtt|realtime|presence|logging|analytics|beacon|direct_v2|\/direct\/|upload|media\/upload)/i;
+    const MAX_BODY_CHARS = 512_000;
     const MAX_STABLE_TICKS = 16;
     const MAX_FOLLOW_STABLE_TICKS = 12;
     const MAX_MISMATCH_REVERIFY_PASSES = 1;
     const LIST_SETTLE_REQUIRED_TICKS = 3;
     const LIST_SETTLE_MAX_TICKS = 12;
-    const TARGET_COUNT = 288;
+    const MAX_COLLECTION_MS = 10 * 60 * 1000;
+    const DEVTOOLS_READY_STALE_MS = 12000;
     const STORAGE_PREFIX = "ig_follower_snapshot";
     const EXECUTION_MODE = "collect-and-compare";
     const FOLLOW_ACTION_ENABLED = false;
@@ -66,11 +69,13 @@
         collectedUsers: new Set(),
         followingUsers: new Set(),
         runId: "",
+        runProfile: null,
         lastCount: 0,
         stableTicks: 0,
         followButtonsClicked: 0,
         followedUsers: new Set(),
         followersScrollBox: null,
+        cachedScrollBox: null,
         lastScrollBoxCandidates: [],
         scrollDiagnostics: [],
         scrollRecovery: {
@@ -89,6 +94,10 @@
         userProvenance: {
             followers: new Map(),
             following: new Map()
+        },
+        sourceCountsCache: {
+            followers: Object.create(null),
+            following: Object.create(null)
         },
         candidateUsers: {
             followers: new Set(),
@@ -133,6 +142,27 @@
         accuracyPreflight: null,
         runTimeline: []
     };
+
+    function isRunSuperseded() {
+        return window.__igFollowerActiveRunId !== state.runId;
+    }
+
+    function hasProfileChanged() {
+        return Boolean(state.runProfile) &&
+            state.runProfile !== "unknown_profile" &&
+            getProfileKey() !== state.runProfile;
+    }
+
+    function isUsableScrollBox(scrollBox) {
+        return scrollBox instanceof Element &&
+            scrollBox.isConnected &&
+            isElementVisible(scrollBox) &&
+            scrollBox.scrollHeight >= scrollBox.clientHeight;
+    }
+
+    function shouldAbortLongTask(startedAt, maxMs = MAX_COLLECTION_MS) {
+        return isRunSuperseded() || Date.now() - startedAt > maxMs;
+    }
 
     function isVerboseLogging() {
         return window.__igFollowerVerbose === true;
@@ -210,6 +240,10 @@
         existing.lastSeenAt = now;
         existing.seenCount++;
         existing.sourceSeenCounts[label] = (existing.sourceSeenCounts[label] || 0) + 1;
+        if (isNewSource) {
+            const cache = state.sourceCountsCache[mode];
+            if (cache) cache[label] = (cache[label] || 0) + 1;
+        }
 
         if (isNewUsername || isNewSource || isNewConfidence || isNewReason || detail.forceEvidence) {
             existing.recentEvidence.push({
@@ -267,13 +301,7 @@
     }
 
     function getSourceCounts(mode) {
-        const counts = {};
-        for (const info of state.userProvenance[mode].values()) {
-            for (const source of info.sources || []) {
-                counts[source] = (counts[source] || 0) + 1;
-            }
-        }
-        return counts;
+        return { ...(state.sourceCountsCache[mode] || {}) };
     }
 
     function hasConfirmedNetworkEvidence(mode) {
@@ -374,7 +402,7 @@
         return {
             runId: state.runId,
             generatedAt: new Date().toISOString(),
-            targetProfile: getProfileKey(),
+            targetProfile: state.runProfile || getProfileKey(),
             timeline: state.runTimeline.slice(-MAX_RUN_TIMELINE_EVENTS),
             executionMode: EXECUTION_MODE,
             followActionEnabled: FOLLOW_ACTION_ENABLED,
@@ -470,6 +498,10 @@
         }
 
         const result = window.__igFollowerResult || {};
+        const currentProfile = getProfileKey();
+        const savedProfile = result.profile || "unknown_profile";
+        const collectedAt = result.collectedAt || "";
+        const runId = result.runId || "";
         const followers = new Set((result.followers || []).map((value) => String(value).toLowerCase()));
         const following = new Set((result.following || []).map((value) => String(value).toLowerCase()));
         const followerCandidates = new Set((result.candidates?.followers || []).map((value) => String(value).toLowerCase()));
@@ -511,6 +543,15 @@
 
         console.log("========== 계정 진단 ==========");
         console.log("👤 계정:", normalized);
+        console.log("🧭 실행 정보:", {
+            savedProfile,
+            currentProfile,
+            collectedAt: collectedAt || "알 수 없음",
+            runId: runId || "알 수 없음"
+        });
+        if (savedProfile !== "unknown_profile" && currentProfile !== "unknown_profile" && savedProfile !== currentProfile) {
+            console.log("⚠️ 현재 페이지와 저장된 결과의 프로필이 다릅니다. 이전 실행 결과를 보고 있을 수 있습니다.");
+        }
         console.log("📥 followers 포함:", inFollowers, followerProvenance || "출처 없음");
         console.log("📤 following 포함:", inFollowing, followingProvenance || "출처 없음");
         if (followerProvenance?.recentEvidence?.length) {
@@ -540,6 +581,19 @@
         return explanation;
     }
 
+    function printIgFollowerHelp() {
+        console.log("========== Instagram Follower Comparator 도움말 ==========");
+        console.log("1) 전체 상태 빠르게 보기: window.__igFollowerDebug?.()");
+        console.log('2) 특정 계정 판정 보기: window.__igFollowerExplainUser?.("username")');
+        console.log('3) final diff 목록 보기: window.__igFollowerPrintFullList?.("followersWithoutMeFollowing" | "iFollowButNotReturned")');
+        console.log('4) followers/following 원본 목록 보기: window.__igFollowerPrintFullList?.("followers" | "following")');
+        console.log("5) 실행 타임라인 보기: window.__igFollowerPrintTimeline?.()");
+        console.log("6) 경고만 보기: window.__igFollowerPrintWarnings?.()");
+        console.log("7) DevTools 상태 보기: window.__igFollowerPrintDevToolsStatus?.()");
+        console.log("8) DevTools 없이 수동 page-network 보조 켜기: window.__igFollowerEnablePageNetworkBridge?.()");
+        console.log("판정 순서: DevTools 확정 payload > page-network 확정 payload > DOM_PREVIEW");
+    }
+
     function countSources(...sourceCountMaps) {
         const totals = {};
         for (const sourceCounts of sourceCountMaps) {
@@ -548,6 +602,15 @@
             }
         }
         return totals;
+    }
+
+    function isDevtoolsBridgeFresh() {
+        if (!state.devtoolsBridge.ready) return false;
+        const latest = [state.devtoolsBridge.lastReadyAt, state.devtoolsBridge.lastStatusAt, state.devtoolsBridge.lastPayloadAt]
+            .map((value) => Date.parse(value || ""))
+            .filter(Number.isFinite);
+        if (latest.length === 0) return false;
+        return Date.now() - Math.max(...latest) <= DEVTOOLS_READY_STALE_MS;
     }
 
     function getAccuracyMode(summary = {}) {
@@ -593,7 +656,7 @@
                 severity: "warning",
                 message: "page-context XHR/fetch 브리지가 후보 계정만 제공했고 검증된 page network payload는 없었습니다. 후보는 final diff에서 제외됩니다."
             });
-        } else if (bridge.ready) {
+        } else if (isDevtoolsBridgeFresh()) {
             status = "DEVTOOLS_CONNECTED_NO_PAYLOAD";
             label = "DevTools 연결됨, 목록 payload 미수신";
             recommendedAction = "DevTools를 연 상태에서 Instagram 탭을 새로고침하고 followers/following 목록을 다시 열어 네트워크 캡처를 보강하세요.";
@@ -622,7 +685,7 @@
             status,
             label,
             recommendedAction,
-            devtoolsConnected: Boolean(bridge.ready),
+            devtoolsConnected: isDevtoolsBridgeFresh(),
             devtoolsPayloadCount: bridge.payloadCount,
             devtoolsConfirmedPayloadCount: bridge.confirmedPayloadCount,
             devtoolsCandidatePayloadCount: bridge.candidatePayloadCount,
@@ -733,6 +796,9 @@
             const afterConfirmed = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
             const afterCandidates = state.candidateUsers[mode].size;
             const added = isCandidate ? afterCandidates - beforeCandidates : afterConfirmed - beforeConfirmed;
+            if (!isCandidate && added > 0) {
+                demoteDomOnlyConfirmedUsers(mode, "confirmed-network-payload-arrived");
+            }
 
             state.pageNetworkBridge.ready = true;
             state.pageNetworkBridge.payloadCount++;
@@ -750,6 +816,7 @@
         window.__igFollowerPageNetworkBridgeHandler = handler;
         window.__igFollowerDebug = printReadableDebugSummary;
         window.__igFollowerExplainUser = explainUsername;
+        window.__igFollowerHelp = printIgFollowerHelp;
         window.__igFollowerPrintFullList = printFullStoredList;
         window.__igFollowerPrintTimeline = printStoredTimeline;
         window.__igFollowerPrintWarnings = printStoredWarnings;
@@ -791,6 +858,33 @@
 
     function enablePageNetworkBridge() {
         return requestPageNetworkBridgeEnable("manual");
+    }
+
+    function demoteDomOnlyConfirmedUsers(mode, reason = "network-evidence-arrived") {
+        const confirmed = mode === "following" ? state.followingUsers : state.collectedUsers;
+        const bucket = state.userProvenance[mode];
+        if (!confirmed || !bucket) return 0;
+
+        let demoted = 0;
+        for (const username of Array.from(confirmed)) {
+            const info = bucket.get(username);
+            const sources = Array.from(info?.sources || []);
+            if (sources.length === 0 || sources.some((source) => source !== "DOM")) continue;
+            confirmed.delete(username);
+            state.candidateUsers[mode].add(username);
+            recordUsernameProvenance(username, mode, "DOM-candidate", {
+                confidence: "candidate",
+                reason,
+                phase: state.currentPhase
+            });
+            demoted++;
+        }
+
+        if (demoted > 0) {
+            console.log(`🧪 ${mode} 네트워크 확정 증거 도착 후 DOM-only 확정 ${demoted}명을 후보로 재분류했습니다.`);
+            recordRunEvent("dom_confirmed_demoted_after_network", { mode, demoted, reason });
+        }
+        return demoted;
     }
 
     function addCandidateUsername(username, mode, source = "network", reason = "ambiguous-network") {
@@ -837,54 +931,36 @@
         return setToUse.size > before;
     }
 
-    function collectFromPayload(payload, seen = new WeakSet(), depth = 0, targetSet = state.collectedUsers, mode = null, source = "network", confidence = "confirmed") {
-        if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) {
-            return 0;
-        }
+    function collectFromPayload(payload, seen = new WeakSet(), depth = 0, targetSet = state.collectedUsers, mode = null, source = "network", confidence = "confirmed", insideListContainer = false) {
+        if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) return 0;
         seen.add(payload);
         let added = 0;
-
         if (Array.isArray(payload)) {
-            for (const item of payload) {
-                added += collectFromPayload(item, seen, depth + 1, targetSet, mode, source, confidence);
-            }
+            for (const item of payload) added += collectFromPayload(item, seen, depth + 1, targetSet, mode, source, confidence, insideListContainer);
             return added;
         }
-
-        if (Object.prototype.hasOwnProperty.call(payload, "username")) {
+        const targetMode = mode || getCollectionModeForSet(targetSet);
+        if (insideListContainer && Object.prototype.hasOwnProperty.call(payload, "username")) {
             if (confidence === "candidate") {
-                if (addCandidateUsername(payload.username, mode || getCollectionModeForSet(targetSet), source, "ambiguous-network-username")) added++;
-            } else if (addUsername(payload.username, targetSet, source, mode)) {
+                if (addCandidateUsername(payload.username, targetMode, source, "ambiguous-network-username")) added++;
+            } else if (addUsername(payload.username, targetSet, source, targetMode)) {
                 added++;
             }
         }
-
-        const userListFields = ["users", "items", "edges", "nodes", "data"];
-        for (const field of userListFields) {
+        for (const field of ["users", "items", "edges", "nodes", "data"]) {
             if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
             const value = payload[field];
-
             if (field === "edges" && Array.isArray(value)) {
-                for (const edge of value) {
-                    if (edge?.node) {
-                        added += collectFromPayload(edge.node, seen, depth + 1, targetSet, mode, source, confidence);
-                    }
-                }
+                for (const edge of value) if (edge?.node) added += collectFromPayload(edge.node, seen, depth + 1, targetSet, mode, source, confidence, true);
                 continue;
             }
-
+            const childInsideListContainer = insideListContainer || field !== "data";
             if (Array.isArray(value)) {
-                for (const item of value) {
-                    added += collectFromPayload(item, seen, depth + 1, targetSet, mode, source, confidence);
-                }
-                continue;
-            }
-
-            if (value && typeof value === "object") {
-                added += collectFromPayload(value, seen, depth + 1, targetSet, mode, source, confidence);
+                for (const item of value) added += collectFromPayload(item, seen, depth + 1, targetSet, mode, source, confidence, childInsideListContainer);
+            } else if (value && typeof value === "object") {
+                added += collectFromPayload(value, seen, depth + 1, targetSet, mode, source, confidence, childInsideListContainer);
             }
         }
-
         return added;
     }
 
@@ -896,9 +972,19 @@
         return null;
     }
 
-    function ingestApiResponse(payloadText, source = "network", targetSetMode = "followers", options = {}) {
-        if (!payloadText) return;
+    function looksLikeJsonUserPayload(text) {
+        if (!text || typeof text !== "string") return false;
+        const trimmed = text.trim();
+        if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false;
+        return /"username"|"users"|"items"|"edges"|"nodes"|"data"/.test(trimmed);
+    }
 
+    function ingestApiResponse(payloadText, source = "network", targetSetMode = "followers", options = {}) {
+        if (!payloadText) return 0;
+        if (typeof payloadText === "string") {
+            if (payloadText.length > MAX_BODY_CHARS) return 0;
+            if (!looksLikeJsonUserPayload(payloadText)) return 0;
+        }
         const targetSet = targetSetMode === "following" ? state.followingUsers : state.collectedUsers;
         const confidence = options.confidence || "confirmed";
         try {
@@ -906,70 +992,46 @@
             const added = collectFromPayload(parsed, new WeakSet(), 0, targetSet, targetSetMode, source, confidence);
             if (added > 0) {
                 const modeLabel = targetSetMode === "following" ? "Following" : "Followers";
-                if (confidence === "candidate") {
-                    console.log(
-                        `%c🧪 [${source}] ${modeLabel} 검증 필요 후보 +${added} / 후보 총 ${state.candidateUsers[targetSetMode].size}`,
-                        "color: #cc8800; font-weight: bold;"
-                    );
-                } else {
-                    console.log(
-                        `%c📡 [${source}] ${modeLabel} +${added} / 총 ${targetSet.size}`,
-                        "color: #00cc66; font-weight: bold;"
-                    );
-                }
+                if (confidence === "candidate") console.log(`%c🧪 [${source}] ${modeLabel} 검증 필요 후보 +${added} / 후보 총 ${state.candidateUsers[targetSetMode].size}`, "color: #cc8800; font-weight: bold;");
+                else console.log(`%c📡 [${source}] ${modeLabel} +${added} / 총 ${targetSet.size}`, "color: #0099ff; font-weight: bold;");
             }
-        } catch (e) {
-            // JSON 파싱 실패 시 무시
-        }
+            return added;
+        } catch (e) { return 0; }
     }
 
     function hookNetwork() {
-        if (window.__igFollowerHooksInstalled) {
-            return;
-        }
-
+        if (window.__igFollowerHooksInstalled) return;
         window.__igFollowerHooksInstalled = true;
         const oldSend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.send = function() {
-            this.addEventListener(
-                "load",
-                () => {
-                    if (this.status !== 200) return;
-                    const url = this.responseURL || "";
-                    if (!FOLLOWERS_URL_RE.test(url)) return;
-
-                    const detectedMode = detectCollectionMode(url);
-                    const mode = detectedMode || state.activeCollectionMode || "followers";
-                    if (!/followers|following/.test(mode)) return;
-
-                    ingestApiResponse(this.responseText, detectedMode ? "XHR" : "XHR-candidate", mode, {
-                        confidence: detectedMode ? "confirmed" : "candidate"
-                    });
-                },
-                { once: true }
-            );
+            this.addEventListener("load", () => {
+                if (this.status !== 200) return;
+                const url = this.responseURL || "";
+                if (!FOLLOWERS_URL_RE.test(url) || IGNORED_URL_RE.test(url)) return;
+                const detectedMode = detectCollectionMode(url);
+                const mode = detectedMode || state.activeCollectionMode || "followers";
+                if (!/followers|following/.test(mode)) return;
+                const responseText = this.responseText;
+                if (typeof responseText !== "string" || responseText.length > MAX_BODY_CHARS || !looksLikeJsonUserPayload(responseText)) return;
+                window.__igFollowerIngestApiResponse?.(responseText, detectedMode ? "XHR" : "XHR-candidate", mode, { confidence: detectedMode ? "confirmed" : "candidate" });
+            }, { once: true });
             return oldSend.apply(this, arguments);
         };
-
         const originalFetch = window.fetch;
         window.fetch = async (...args) => {
             const req = args[0];
             const url = typeof req === "string" ? req : req?.url || "";
             const res = await originalFetch.apply(window, args);
-
-            if (res.ok && FOLLOWERS_URL_RE.test(url)) {
+            if (res.ok && FOLLOWERS_URL_RE.test(url) && !IGNORED_URL_RE.test(url)) {
                 const detectedMode = detectCollectionMode(url);
                 const mode = detectedMode || state.activeCollectionMode || "followers";
                 if (/followers|following/.test(mode)) {
-                    res.clone()
-                        .text()
-                        .then((text) => ingestApiResponse(text, detectedMode ? "fetch" : "fetch-candidate", mode, {
-                            confidence: detectedMode ? "confirmed" : "candidate"
-                        }))
-                        .catch(() => {});
+                    res.clone().text().then((bodyText) => {
+                        if (bodyText.length > MAX_BODY_CHARS || !looksLikeJsonUserPayload(bodyText)) return;
+                        window.__igFollowerIngestApiResponse?.(bodyText, detectedMode ? "fetch" : "fetch-candidate", mode, { confidence: detectedMode ? "confirmed" : "candidate" });
+                    }).catch(() => {});
                 }
             }
-
             return res;
         };
     }
@@ -979,7 +1041,8 @@
             ...state.devtoolsBridge,
             followers: state.collectedUsers.size,
             following: state.followingUsers.size,
-            activeCollectionMode: state.activeCollectionMode
+            activeCollectionMode: state.activeCollectionMode,
+            fresh: isDevtoolsBridgeFresh()
         };
     }
 
@@ -1020,6 +1083,14 @@
             if (message.source !== "devtools-network" || message.schemaVersion !== 1) {
                 state.devtoolsBridge.lastError = "invalid-devtools-schema";
                 sendResponse?.({ ok: false, error: "invalid-devtools-schema" });
+                return false;
+            }
+
+            if (message.type === "IG_DEVTOOLS_DISCONNECTED") {
+                state.devtoolsBridge.ready = false;
+                state.devtoolsBridge.lastError = "devtools-port-disconnected";
+                console.log("🔌 DevTools 브리지 연결이 해제되었습니다. 이후 결과는 DevTools 보조 없이 판정됩니다.");
+                sendResponse?.({ ok: true });
                 return false;
             }
 
@@ -1172,7 +1243,7 @@
         await wait(DEVTOOLS_PREFLIGHT_GRACE_MS, 200);
 
         let autoEnabled = false;
-        if (!state.devtoolsBridge.ready && PAGE_NETWORK_AUTO_ASSIST_ENABLED) {
+        if (!isDevtoolsBridgeFresh() && PAGE_NETWORK_AUTO_ASSIST_ENABLED) {
             requestPageNetworkBridgeEnable("auto-assist-devtools-not-ready");
             autoEnabled = true;
             await wait(500, 200);
@@ -1182,7 +1253,7 @@
             startedAt,
             finishedAt: new Date().toISOString(),
             graceMs: DEVTOOLS_PREFLIGHT_GRACE_MS,
-            devtoolsReady: Boolean(state.devtoolsBridge.ready),
+            devtoolsReady: isDevtoolsBridgeFresh(),
             pageNetworkReady: Boolean(state.pageNetworkBridge.ready),
             pageNetworkEnabled: Boolean(state.pageNetworkBridge.enabled),
             pageNetworkAutoEnabled: Boolean(autoEnabled || state.pageNetworkBridge.autoEnabled),
@@ -1239,7 +1310,7 @@
         };
     }
 
-    function scoreScrollBoxCandidate(el, index) {
+    function scoreScrollBoxCandidate(el, index, options = {}) {
         const style = getComputedStyle(el);
         const overflow = `${style.overflow} ${style.overflowY}`;
         const isScrollable = /(auto|scroll)/.test(overflow);
@@ -1247,9 +1318,8 @@
         const hasRoom = el.scrollHeight > el.clientHeight + 24;
         const profileLinks = getProfileLinksIn(el);
         const followButtons = getFollowButtonsIn(el);
-        const probe = probeScrollMovement(el);
+        const probe = options.skipProbe ? { canMove: false } : probeScrollMovement(el);
         const rect = el.getBoundingClientRect();
-
         let score = 0;
         if (isScrollable) score += 40;
         if (hasRoom) score += 80;
@@ -1259,52 +1329,33 @@
         score += Math.min(Math.floor((el.scrollHeight - el.clientHeight) / 40), 60);
         if (rect.height > 180) score += 25;
         if (rect.height > window.innerHeight * 0.9) score -= 25;
-
-        return {
-            el,
-            index,
-            score,
-            isScrollable,
-            isVisible,
-            hasRoom,
-            canMove: probe.canMove,
-            scrollTop: Math.round(el.scrollTop),
-            scrollHeight: Math.round(el.scrollHeight),
-            clientHeight: Math.round(el.clientHeight),
-            profileLinkCount: profileLinks.length,
-            followButtonCount: followButtons.length,
-            tag: el.tagName.toLowerCase(),
-            className: String(el.className || "").slice(0, 80)
-        };
+        return { el, index, score, isScrollable, isVisible, hasRoom, canMove: probe.canMove, scrollTop: Math.round(el.scrollTop), scrollHeight: Math.round(el.scrollHeight), clientHeight: Math.round(el.clientHeight), profileLinkCount: profileLinks.length, followButtonCount: followButtons.length, tag: el.tagName.toLowerCase(), className: String(el.className || "").slice(0, 80) };
     }
 
-    function findFollowerListBox() {
+    function getLowCostScrollBoxCandidates(scope) {
+        return Array.from(scope.querySelectorAll("div")).map((el, index) => ({ el, index, overflow: `${getComputedStyle(el).overflow} ${getComputedStyle(el).overflowY}`, scrollDelta: el.scrollHeight - el.clientHeight })).filter((item) => item.scrollDelta > 24 && /(auto|scroll|overlay)/i.test(item.overflow) && isElementVisible(item.el)).sort((a, b) => b.scrollDelta - a.scrollDelta).slice(0, 12);
+    }
+
+    function scoreScrollBoxCandidates(candidates) {
+        const preliminary = candidates.map((item) => scoreScrollBoxCandidate(item.el, item.index, { skipProbe: true })).filter((item) => item.isVisible && item.isScrollable && item.hasRoom && item.profileLinkCount > 0).sort((a, b) => b.score - a.score);
+        const probeTargets = new Set(preliminary.slice(0, 3).map((item) => item.el));
+        return preliminary.map((item) => probeTargets.has(item.el) ? scoreScrollBoxCandidate(item.el, item.index) : item).sort((a, b) => b.score - a.score);
+    }
+
+    function findFollowerListBox(options = {}) {
+        if (!options.forceRescan && state.cachedScrollBox?.isConnected && isElementVisible(state.cachedScrollBox) && state.cachedScrollBox.scrollHeight > state.cachedScrollBox.clientHeight) return state.cachedScrollBox;
         const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]')).filter(isElementVisible);
         const allCandidates = [];
-
-        for (const dialog of dialogs) {
-            const scrollCandidates = Array.from(dialog.querySelectorAll("div"))
-                .map((el, index) => scoreScrollBoxCandidate(el, index))
-                .filter((item) => item.isVisible && item.isScrollable && item.hasRoom && item.profileLinkCount > 0);
-
-            allCandidates.push(...scrollCandidates);
-        }
-
+        for (const dialog of dialogs) allCandidates.push(...scoreScrollBoxCandidates(getLowCostScrollBoxCandidates(dialog)));
         if (allCandidates.length > 0) {
             allCandidates.sort((a, b) => b.score - a.score);
             state.lastScrollBoxCandidates = allCandidates.slice(0, 5).map(({ el, ...detail }) => detail);
+            state.cachedScrollBox = allCandidates[0].el;
             return allCandidates[0].el;
         }
-
-        const fallbackCandidates = Array.from(
-            document.querySelectorAll('div[role="dialog"] div[style*="overflow: auto"], div[style*="overflow: auto"], div[style*="overflow: hidden auto"]')
-        )
-            .filter(isElementVisible)
-            .map((el, index) => scoreScrollBoxCandidate(el, index))
-            .filter((item) => item.hasRoom || item.profileLinkCount > 0)
-            .sort((a, b) => b.score - a.score);
-
+        const fallbackCandidates = Array.from(document.querySelectorAll('div[role="dialog"] div[style*="overflow: auto"], div[style*="overflow: auto"], div[style*="overflow: hidden auto"]')).filter(isElementVisible).map((el, index) => scoreScrollBoxCandidate(el, index)).filter((item) => item.hasRoom || item.profileLinkCount > 0).sort((a, b) => b.score - a.score);
         state.lastScrollBoxCandidates = fallbackCandidates.slice(0, 5).map(({ el, ...detail }) => detail);
+        if (fallbackCandidates[0]?.el) state.cachedScrollBox = fallbackCandidates[0].el;
         return fallbackCandidates[0]?.el || null;
     }
 
@@ -1396,6 +1447,8 @@
     }
 
     function getClickableTabCandidates(kind) {
+        const config = KIND_CONFIG[kind] || KIND_CONFIG.followers;
+        const keywordSet = KIND_ALT_TEXTS[kind] || [];
         const direct = getDirectFollowersButtons(kind);
         if (direct.length > 0) return direct.map((item) => item.el);
 
@@ -1406,6 +1459,14 @@
         for (const n of nodes) {
             if (!(n instanceof HTMLElement)) continue;
             if (n.getAttribute("disabled")) continue;
+
+            const rawHref = normalizePath(n.getAttribute("href") || n.getAttribute("data-href") || "");
+            const rawLabel = normalizeText(n.getAttribute("aria-label") || n.textContent || "");
+            const cheapMatch = rawHref.includes(config.path) ||
+                config.textRe.test(rawLabel) ||
+                keywordSet.some((keyword) => rawLabel.includes(normalizeText(keyword)));
+            if (!cheapMatch) continue;
+
             if (!isCandidateVisible(n)) continue;
 
             const clickable = n.closest("a[href],button,[role='button'],[role='link']") || n;
@@ -1436,6 +1497,7 @@
     async function waitForDialogReady(timeoutMs = 3000, intervalMs = 150) {
         const end = Date.now() + timeoutMs;
         while (Date.now() < end) {
+            if (isRunSuperseded()) return false;
             if (isDialogReady()) return true;
             await wait(intervalMs, 120);
         }
@@ -1515,6 +1577,10 @@
         console.log(`2-1) ${baseLog} 목록 렌더 안정화 대기...`);
 
         for (let tick = 1; tick <= LIST_SETTLE_MAX_TICKS; tick++) {
+            if (isRunSuperseded()) {
+                return { ok: false, ticks: tick - 1, snapshot: lastSnapshot, reason: "run_superseded" };
+            }
+
             const scrollBox = findFollowerListBox();
             if (!scrollBox) {
                 await wait(260, 120);
@@ -2068,6 +2134,7 @@
     async function waitForDialogClosed(timeoutMs = 3000, intervalMs = 150) {
         const end = Date.now() + timeoutMs;
         while (Date.now() < end) {
+            if (isRunSuperseded()) return false;
             if (!isDialogOpen()) return true;
             await wait(intervalMs, 60);
         }
@@ -2395,13 +2462,22 @@
 
     async function reverifyCurrentListCollection(targetCount, targetSet, modeLabel, maxPasses = MAX_MISMATCH_REVERIFY_PASSES) {
         const baseLog = modeLabel === "following" ? "팔로잉" : "팔로워";
+        const startedAt = Date.now();
         if (targetCount <= 0 || targetSet.size >= targetCount) {
             return { ok: true, passes: 0, finalCount: targetSet.size, reason: "already_complete" };
         }
 
         for (let pass = 1; pass <= maxPasses; pass++) {
             const scrollBox = findFollowerListBox();
-            if (!scrollBox) {
+            if (hasProfileChanged()) {
+                console.log(`🛑 ${baseLog} 재검증 중 프로필이 변경되어(${state.runProfile} → ${getProfileKey()}) 현재까지의 partial 결과로 종료합니다.`);
+                state.lastScrollEndReason = "profile_changed";
+                return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
+            }
+            if (shouldAbortLongTask(startedAt)) {
+                return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: isRunSuperseded() ? "run_superseded" : "time_cap_reached" };
+            }
+            if (!isUsableScrollBox(scrollBox)) {
                 return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "no_scroll_box" };
             }
 
@@ -2411,6 +2487,17 @@
             const checkpoints = [0, 0.25, 0.5, 0.75, 1];
 
             for (const point of checkpoints) {
+                if (hasProfileChanged()) {
+                    console.log(`🛑 ${baseLog} 재검증 중 프로필이 변경되어(${state.runProfile} → ${getProfileKey()}) 현재까지의 partial 결과로 종료합니다.`);
+                    state.lastScrollEndReason = "profile_changed";
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
+                }
+                if (shouldAbortLongTask(startedAt)) {
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: isRunSuperseded() ? "run_superseded" : "time_cap_reached" };
+                }
+                if (!isUsableScrollBox(scrollBox)) {
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "scroll_box_detached" };
+                }
                 scrollBox.scrollTop = Math.floor(maxTop * point);
                 await wait(520, 180);
 
@@ -2436,9 +2523,10 @@
         return { ok: false, passes: maxPasses, finalCount: targetSet.size, reason: "count_mismatch_after_reverify" };
     }
 
-    async function scrollUntilEnd(targetCount = TARGET_COUNT, targetSet = state.collectedUsers, modeLabel = "followers", options = {}) {
+    async function scrollUntilEnd(targetCount = 0, targetSet = state.collectedUsers, modeLabel = "followers", options = {}) {
+        const startedAt = Date.now();
         let scrollBox = findFollowerListBox();
-        if (!scrollBox) {
+        if (!isUsableScrollBox(scrollBox)) {
             console.log(`❌ ${modeLabel} 목록 스크롤 박스를 못 찾았어요. 목록이 열려 있는지 확인하세요.`);
             state.lastScrollEndReason = "no_scroll_box";
             return [];
@@ -2468,6 +2556,27 @@
         });
 
         while (true) {
+            if (isRunSuperseded()) {
+                console.log(`🛑 ${baseLog} 수집이 새 실행으로 교체되어 현재 루프를 종료합니다.`);
+                state.lastScrollEndReason = "run_superseded";
+                break;
+            }
+            if (hasProfileChanged()) {
+                console.log(`🛑 ${baseLog} 수집 중 프로필이 변경되어(${state.runProfile} → ${getProfileKey()}) 현재까지의 partial 결과로 종료합니다.`);
+                state.lastScrollEndReason = "profile_changed";
+                break;
+            }
+            if (Date.now() - startedAt > MAX_COLLECTION_MS) {
+                console.log(`⏱️ ${baseLog} 수집 시간이 길어져 안전 상한에서 partial 종료합니다.`);
+                state.lastScrollEndReason = "time_cap_reached";
+                break;
+            }
+            if (!isUsableScrollBox(scrollBox)) {
+                console.log(`🧭 ${baseLog} 스크롤 박스가 사라져 현재 보유 결과 기준으로 종료합니다.`);
+                state.lastScrollEndReason = "scroll_box_detached";
+                break;
+            }
+
             const profileLinks = getProfileLinksIn(scrollBox);
             const beforeDom = collectFromDOM(scrollBox, targetSet, {
                 profileLinks,
@@ -2577,7 +2686,7 @@
     }
 
     function getStorageKey() {
-        return `${STORAGE_PREFIX}:${getProfileKey()}`;
+        return `${STORAGE_PREFIX}:${state.runProfile || getProfileKey()}`;
     }
 
     function compareFollowSets() {
@@ -2797,7 +2906,7 @@
         } else if (bridge.candidatePayloadCount > 0) {
             status = "CONNECTED_CANDIDATE_ONLY";
             label = "후보 payload만 확인됨";
-        } else if (bridge.ready) {
+        } else if (isDevtoolsBridgeFresh()) {
             status = "CONNECTED_NO_PAYLOAD";
             label = "연결됐지만 followers/following payload 없음";
         }
@@ -2816,8 +2925,24 @@
         const diffs = summary.diffs || {};
         const devtools = getDevtoolsListStatus();
         const pageBridge = getPageNetworkBridgeSnapshot();
+        const accuracyMode = getAccuracyMode(summary);
+        const compareCounts = diffs.compareCounts || {};
+        const expectedFollowers = summary.expectedFollowersCount || state.expectedCounts.followers || 0;
+        const expectedFollowing = summary.expectedFollowingCount || state.expectedCounts.following || 0;
+        const followersMatch = !expectedFollowers || compareCounts.followers === expectedFollowers;
+        const followingMatch = !expectedFollowing || compareCounts.following === expectedFollowing;
+        let trustGate = "참고용 결과";
+        if (diffs.integrity && !diffs.integrity.ok) {
+            trustGate = "계산 무결성 확인 필요";
+        } else if (accuracyMode.status === "DEVTOOLS_CONNECTED_NO_PAYLOAD" || accuracyMode.status === "DOM_PREVIEW") {
+            trustGate = "DevTools 재실행 필요";
+        } else if ((accuracyMode.status === "DEVTOOLS_ASSISTED" || accuracyMode.status === "PAGE_NETWORK_ASSISTED") && followersMatch && followingMatch) {
+            trustGate = "확정 비교 가능";
+        }
 
         console.log("========== Instagram 비교 결과 ==========");
+        console.log("판정:", trustGate);
+        console.log("정확도 모드:", accuracyMode.label);
         console.log("상태:", summary.status || "unknown");
         console.log(`팔로워: ${summary.followersCount ?? 0} / 예상 ${summary.expectedFollowersCount || "알 수 없음"}`);
         console.log(`팔로잉: ${summary.followingCount ?? 0} / 예상 ${summary.expectedFollowingCount || "알 수 없음"}`);
@@ -2842,6 +2967,7 @@
         console.log(`- Page Network Bridge: ${pageBridge.ready ? (state.pageNetworkBridge.autoEnabled ? "auto-enabled" : state.pageNetworkBridge.enabled ? "활성" : "passive") : "연결 안 됨"} / 확정 ${pageBridge.confirmedPayloadCount || 0}개 / 후보 ${pageBridge.candidatePayloadCount || 0}개`);
         console.log(`- DOM Scroll: followers ${summary.followersScrollEndReason || "알 수 없음"}, following ${summary.followingScrollEndReason || "알 수 없음"}`);
         console.log("문제가 있으면:");
+        console.log("__igFollowerHelp()");
         console.log('__igFollowerExplainUser("username")');
         console.log("__igFollowerDebug()");
         console.log('__igFollowerPrintFullList("following")');
@@ -2945,6 +3071,32 @@
         console.log("📦 전체 결과 객체: window.__igFollowerResult");
     }
 
+    function buildSessionMessagePayload(payload) {
+        return {
+            profile: payload.profile,
+            collectedAt: payload.collectedAt,
+            runId: payload.runId,
+            executionMode: payload.executionMode,
+            followActionEnabled: payload.followActionEnabled,
+            finalDiffPolicy: payload.finalDiffPolicy,
+            accuracyMode: payload.accuracyMode,
+            followers: payload.followers,
+            following: payload.following,
+            snapshots: payload.snapshots,
+            candidates: payload.candidates,
+            diffs: payload.diffs,
+            expectedCounts: payload.expectedCounts,
+            scroll: {
+                followersEndReason: payload.scroll?.followersEndReason || null,
+                followersDiagnostics: (payload.scroll?.followersDiagnostics || []).slice(-5),
+                followingEndReason: payload.scroll?.followingEndReason || null,
+                followingDiagnostics: (payload.scroll?.followingDiagnostics || []).slice(-5)
+            },
+            collectionDiagnostics: payload.collectionDiagnostics,
+            followClicks: payload.followClicks
+        };
+    }
+
     function persistRunSnapshotToExtensionSession(payload) {
         if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
             console.log("ℹ️ 확장 세션 저장을 사용할 수 없어 페이지 메모리에만 저장했습니다.");
@@ -2957,7 +3109,7 @@
                 source: "instagram-collector",
                 schemaVersion: 1,
                 storageKey: getStorageKey(),
-                payload
+                payload: buildSessionMessagePayload(payload)
             }, (response) => {
                 if (chrome.runtime.lastError) {
                     console.log("⚠️ 확장 세션 저장 실패:", chrome.runtime.lastError.message);
@@ -2981,11 +3133,12 @@
             hasDiffs: !!diffs
         });
         const accuracyMode = getAccuracyMode({ status: diffs ? "compared" : "collected" });
+        const profile = state.runProfile || getProfileKey();
         const payload = {
-            profile: getProfileKey(),
+            profile,
             runId: state.runId,
             collectedAt: new Date().toISOString(),
-            source: `instagram-profile:${getProfileKey()}`,
+            source: `instagram-profile:${profile}`,
             executionMode: EXECUTION_MODE,
             followActionEnabled: FOLLOW_ACTION_ENABLED,
             finalDiffPolicy: FINAL_DIFF_POLICY,
@@ -3063,9 +3216,39 @@
         return payload;
     }
 
-    async function followVisibleButtons(targetCount = TARGET_COUNT) {
+    function finalizeIfProfileChanged(summary) {
+        if (!hasProfileChanged()) return false;
+
+        const currentProfile = getProfileKey();
+        const followers = Array.from(state.collectedUsers);
+        const following = Array.from(state.followingUsers);
+        state.lastScrollEndReason = "profile_changed";
+        summary.status = "aborted_profile_changed";
+        summary.lastError = `실행 중 프로필이 ${state.runProfile}에서 ${currentProfile}(으)로 변경되어 중단했습니다.`;
+        summary.followersCount = followers.length;
+        summary.followingCount = following.length;
+        summary.followers = followers;
+        summary.following = following;
+        summary.followersScrollEndReason = state.lastFollowersScrollEndReason || state.lastScrollEndReason;
+        summary.followingScrollEndReason = state.lastFollowingScrollEndReason || state.lastScrollEndReason;
+        summary.followersScrollDiagnostics = state.lastFollowersScrollDiagnostics.slice(-20);
+        summary.followingScrollDiagnostics = state.lastFollowingScrollDiagnostics.slice(-20);
+        summary.accuracyMode = getAccuracyMode(summary);
+        recordRunEvent("run_aborted_profile_changed", {
+            startedProfile: state.runProfile,
+            currentProfile,
+            followersCount: followers.length,
+            followingCount: following.length
+        });
+        persistFollowers(followers, summary.diffs);
+        printSummary(summary);
+        return true;
+    }
+
+    async function followVisibleButtons(targetCount = 0) {
+        const startedAt = Date.now();
         const scrollBox = state.followersScrollBox;
-        if (!scrollBox) {
+        if (!isUsableScrollBox(scrollBox)) {
             console.log("❌ 팔로우 처리할 스크롤 박스가 없습니다. 먼저 팔로워 수집을 먼저 실행하세요.");
             return;
         }
@@ -3074,6 +3257,19 @@
 
         let stable = 0;
         while (true) {
+            if (isRunSuperseded()) {
+                console.log("🛑 팔로우 처리가 새 실행으로 교체되어 종료합니다.");
+                break;
+            }
+            if (Date.now() - startedAt > MAX_COLLECTION_MS) {
+                console.log("⏱️ 팔로우 처리 시간이 길어져 안전 상한에서 종료합니다.");
+                break;
+            }
+            if (!isUsableScrollBox(scrollBox)) {
+                console.log("🧭 팔로우 처리 중 스크롤 박스가 사라져 종료합니다.");
+                break;
+            }
+
             const beforeCount = state.followButtonsClicked;
             const buttons = getVisibleFollowButtons(scrollBox);
             let clickedThisRound = 0;
@@ -3177,15 +3373,21 @@
             following: []
         };
 
+        try {
         state.runId = `ig-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        window.__igFollowerActiveRunId = state.runId;
         summary.runId = state.runId;
+        state.runProfile = getProfileKey();
         state.collectedUsers.clear();
         state.followingUsers.clear();
         state.followedUsers.clear();
         state.followButtonsClicked = 0;
         state.followersScrollBox = null;
+        state.cachedScrollBox = null;
         state.userProvenance.followers.clear();
         state.userProvenance.following.clear();
+        state.sourceCountsCache.followers = Object.create(null);
+        state.sourceCountsCache.following = Object.create(null);
         state.candidateUsers.followers.clear();
         state.candidateUsers.following.clear();
         state.scrollRecovery.followers = [];
@@ -3213,7 +3415,13 @@
         window.__igFollowerRunStartedAt = summary.startedAt;
         recordRunEvent("run_started", { runId: state.runId, startedAt: summary.startedAt });
 
-        hookNetwork();
+        const isExtensionContentScript = typeof chrome !== "undefined" && Boolean(chrome.runtime?.onMessage);
+        window.__igFollowerIngestApiResponse = ingestApiResponse;
+        if (!isExtensionContentScript) {
+            hookNetwork();
+        } else {
+            console.log("ℹ️ 확장 주입 모드: in-page XHR/fetch 후크는 건너뜁니다. (page-network-bridge가 해당 역할 수행)");
+        }
         installExtensionMessageBridge();
         installPageNetworkBridgeListener();
         summary.accuracyPreflight = await runAccuracyPreflight(summary);
@@ -3225,6 +3433,7 @@
         recordRunEvent("open_followers_end", { mode: "followers", ok: openedFollowers });
         summary.openedFollowers = openedFollowers;
         summary.expectedFollowersCount = state.expectedCounts.followers;
+        if (finalizeIfProfileChanged(summary)) return;
         if (!openedFollowers) {
             summary.status = "failed_open_followers";
             summary.lastError = "팔로워 버튼 클릭/대화창 오픈 실패";
@@ -3236,16 +3445,19 @@
         recordRunEvent("followers_settle_start", { mode: "followers" });
         summary.followersSettled = await waitForListSettled("followers");
         recordRunEvent("followers_settle_end", { mode: "followers", result: summary.followersSettled });
+        if (finalizeIfProfileChanged(summary)) return;
         await wait(700, 300);
+        if (finalizeIfProfileChanged(summary)) return;
         console.log("3) 팔로워 이중 수집 시작...");
-        const followersTarget = state.expectedCounts.followers || TARGET_COUNT;
-        console.log(`🎯 팔로워 목표 기준: 화면 표시 ${state.expectedCounts.followers || "없음"}명, 실제 목표 ${followersTarget}명`);
+        const followersTarget = state.expectedCounts.followers || 0;
+        console.log(`🎯 팔로워 목표 기준: 화면 표시 ${state.expectedCounts.followers || "없음"}명, 실제 목표 ${followersTarget > 0 ? `${followersTarget}명` : "전체(정체 시 종료)"}`);
         let followers = await scrollUntilEnd(followersTarget, state.collectedUsers, "followers", { saveScrollBoxForFollow: true });
         if (followersTarget > 0 && followers.length < followersTarget) {
             summary.followersReverify = await reverifyCurrentListCollection(followersTarget, state.collectedUsers, "followers");
             promoteDomCandidatesToConfirmed("followers", state.collectedUsers, followersTarget, "followers-reverify-shortfall");
             followers = Array.from(state.collectedUsers);
         }
+        if (finalizeIfProfileChanged(summary)) return;
         summary.followersCount = followers.length;
         summary.followers = followers;
         summary.followersScrollEndReason = state.lastFollowersScrollEndReason;
@@ -3282,10 +3494,12 @@
 
         console.log("5) 팔로워 목록 닫기...");
         const closedFollowersDialog = await closeActiveDialog();
+        if (finalizeIfProfileChanged(summary)) return;
         if (!closedFollowersDialog) {
             console.log("⚠️ 팔로워 모달 닫기 실패. 마지막 시도 후 1회 더 시도합니다.");
             await wait(800, 0);
             const recheckClosed = await closeActiveDialog();
+            if (finalizeIfProfileChanged(summary)) return;
             if (!recheckClosed) {
                 summary.status = "failed_close_followers_modal";
                 summary.lastError = "팔로워 모달을 닫지 못해 팔로잉 수집을 진행할 수 없습니다.";
@@ -3299,6 +3513,7 @@
 
         console.log("5-1) 모달 닫기 완료 후 2초 대기...");
         await wait(2000, 0);
+        if (finalizeIfProfileChanged(summary)) return;
 
         console.log("6) 팔로잉 목록 열기...");
         recordRunEvent("open_following_start", { mode: "following" });
@@ -3306,6 +3521,7 @@
         recordRunEvent("open_following_end", { mode: "following", ok: openedFollowing });
         summary.openedFollowing = openedFollowing;
         summary.expectedFollowingCount = state.expectedCounts.following;
+        if (finalizeIfProfileChanged(summary)) return;
         if (!openedFollowing) {
             console.log("⚠️ 팔로잉 목록 오픈 실패. 팔로워 기준 비교는 불가");
             summary.diffs = null;
@@ -3320,7 +3536,9 @@
         recordRunEvent("following_settle_start", { mode: "following" });
         summary.followingSettled = await waitForListSettled("following");
         recordRunEvent("following_settle_end", { mode: "following", result: summary.followingSettled });
+        if (finalizeIfProfileChanged(summary)) return;
         await wait(500, 200);
+        if (finalizeIfProfileChanged(summary)) return;
         console.log("7) 팔로잉 목록 수집 시작...");
         const followingTarget = state.expectedCounts.following || 0;
         let following = await scrollUntilEnd(followingTarget, state.followingUsers, "following");
@@ -3329,6 +3547,7 @@
             promoteDomCandidatesToConfirmed("following", state.followingUsers, followingTarget, "following-reverify-shortfall");
             following = Array.from(state.followingUsers);
         }
+        if (finalizeIfProfileChanged(summary)) return;
         summary.followingCount = following.length;
         summary.following = following;
         summary.followingScrollEndReason = state.lastFollowingScrollEndReason;
@@ -3384,7 +3603,33 @@
         persistFollowers(followers, diffs);
         printSummary(summary);
         console.log("8) 전체 저장 완료");
+        } catch (error) {
+            summary.status = "failed_unhandled_exception";
+            summary.lastError = error?.message || String(error);
+            summary.followersCount = state.collectedUsers.size;
+            summary.followingCount = state.followingUsers.size;
+            summary.followers = Array.from(state.collectedUsers);
+            summary.following = Array.from(state.followingUsers);
+            summary.followersScrollEndReason = state.lastFollowersScrollEndReason || state.lastScrollEndReason || null;
+            summary.followingScrollEndReason = state.lastFollowingScrollEndReason || null;
+            try {
+                summary.accuracyMode = getAccuracyMode(summary);
+                persistFollowers(summary.followers, summary.diffs);
+            } catch (persistError) {
+                console.log("❌ 예외 후 partial 저장에도 실패했습니다:", persistError?.message || String(persistError));
+            }
+            console.log("❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
+            printSummary(summary);
+        } finally {
+            if (window.__igFollowerActiveRunId === state.runId) {
+                window.__igFollowerRunInProgress = false;
+            }
+        }
     }
 
+    if (window.__igFollowerRunInProgress === true) {
+        console.log("⚠️ 이전 수집 실행이 아직 진행 중입니다. 이전 실행을 중단하고 새 실행을 시작합니다.");
+    }
+    window.__igFollowerRunInProgress = true;
     main();
 }
