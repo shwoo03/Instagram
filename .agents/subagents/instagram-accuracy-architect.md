@@ -28,3 +28,9 @@ You are responsible for accuracy and trust policy in the Instagram comparator.
 - Give a short priority order.
 - Avoid broad rewrites unless the current structure blocks correctness.
 
+
+## 2026-06-07 Review Addendum
+
+- Check whether confirmed usernames came from exact list evidence or list-member containers, not arbitrary recursive payload fields.
+- Check whether DOM-only confirmed users were reconciled after network evidence arrived.
+- Require a fixture or manual scenario for every repeated false-positive/false-negative class.

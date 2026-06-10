@@ -67,3 +67,11 @@ When a result looks wrong:
 - Do not reset a collection set after DevTools/page-network payloads may have populated it.
 - Treat raw counts, provenance counts, and candidates as diagnostics. Final diff truth comes from compare counts and integrity status.
 - Use `console.log` for expected degraded states. Avoid `console.warn` when the message would create Chrome extension error-panel noise without a real runtime failure.
+
+## 2026-06-07 Evidence Contract Addendum
+
+- Do not treat every recursive `username` field as confirmed evidence. Confirm usernames only from exact list endpoint responses and list-like member containers such as `users`, `items`, `edges`, or `nodes`.
+- Broad GraphQL/friendships/followers/following URL matches are candidate until response shape is explicitly recognized.
+- If confirmed network evidence arrives after DOM collection, demote earlier DOM-only confirmed accounts to candidates before final compare, then apply bounded fallback only for real expected-count shortfalls.
+- Start console interpretation from the trust gate, not raw/provenance counts.
+- For repeated accuracy failures, produce four artifacts: source research in `docs/REFERENCES.md`, project notes in `docs/HANDOFF.md`, implementation/backlog status in `docs/BACKLOG.md`, and a fixture/checklist item.

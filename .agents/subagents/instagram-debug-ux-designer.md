@@ -38,3 +38,9 @@ Then show evidence summary and helper commands.
 - `__igFollowerPrintTimeline()` prints detailed execution events.
 - `__igFollowerPrintWarnings()` prints warnings only.
 
+
+## 2026-06-07 Review Addendum
+
+- The first console decision should answer whether the result is trustworthy before printing long evidence details.
+- Candidate/excluded rows should point to `__igFollowerExplainUser("username")`.
+- Account explanations should show saved profile, current profile, collection time, and run id so stale results are obvious.

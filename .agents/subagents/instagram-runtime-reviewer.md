@@ -29,3 +29,9 @@ You are responsible for runtime stability and performance.
 - Do not make expected-count reached an unconditional instant stop without recheck policy.
 - Do not promote ambiguous network usernames to confirmed users.
 
+
+## 2026-06-07 Review Addendum
+
+- Check MV3 service-worker stale state: port disconnects, content delivery ACKs, tab navigation, and timestamp freshness.
+- Check that page-network parsing filters early and that broad/large responses do not become confirmed evidence by accident.
+- Check that stored snapshots remain bounded and privacy-preserving.

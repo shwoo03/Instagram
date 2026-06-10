@@ -93,3 +93,11 @@ and rollback path are recorded.
 - Network-confirmed evidence is the preferred compare source; DOM is a fallback and diagnostic layer.
 - DOM candidates can explain UI/network disagreement, but they are not final diff members unless bounded fallback promotion is needed to satisfy a count shortfall.
 - Runtime diagnostics should make final results visually distinct from raw/provenance/candidate data.
+
+## 2026-06-07 Accuracy Research Policy
+
+- Accuracy work should start from evidence contracts, not selectors: exact network source, payload shape, expected counts, final compare counts, candidates, and stale-run context.
+- DevTools capture can miss earlier requests if opened late, so `DevTools connected` is not the same as `followers/following payload confirmed`.
+- MV3 background state can be stale or restarted. Bridge state must be timestamped, cleaned on disconnect/navigation, and treated as advisory until content delivery succeeds.
+- MAIN-world page-network capture is the only page request interception path that should be treated as page traffic evidence. Isolated content-script hooks are diagnostics only.
+- Dynamic DOM APIs help diagnose virtual scrolling but do not prove list completeness by themselves.
