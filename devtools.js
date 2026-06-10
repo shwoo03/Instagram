@@ -19,7 +19,10 @@
     lastAckSeq: 0,
     lastCaptureAt: "",
     lastAckAt: "",
-    lastError: ""
+    lastError: "",
+    consecutiveFailures: 0,
+    navigations: 0,
+    lastNavigatedAt: ""
   };
 
   let port = null;
@@ -64,10 +67,17 @@
   }
 
   function detectMode(url) {
+    let pathname = "";
+    try {
+      pathname = new URL(String(url || "")).pathname.toLowerCase();
+    } catch {
+      pathname = String(url || "").split("?")[0].toLowerCase();
+    }
+
     const lower = String(url || "").toLowerCase();
-    if (lower.includes("/followers/") || lower.includes("followers")) return "followers";
-    if (lower.includes("/following/") || lower.includes("following")) return "following";
-    if (lower.includes("graphql") || lower.includes("friendships")) return "active";
+    if (pathname.includes("/followers/")) return "followers";
+    if (pathname.includes("/following/")) return "following";
+    if (lower.includes("graphql") || lower.includes("friendships") || lower.includes("followers") || lower.includes("following")) return "active";
     return "unknown";
   }
 
@@ -87,7 +97,8 @@
     return targetSet.size > before;
   }
 
-  function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0) {
+  // [ig-walker:start] 이 블록은 devtools.js / page-network-bridge.js 간 byte-identical 해야 함 (tools/walker-fixtures.mjs가 검증)
+  function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0, insideListContainer = false) {
     if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) {
       return;
     }
@@ -95,11 +106,11 @@
     seen.add(payload);
 
     if (Array.isArray(payload)) {
-      payload.forEach((item) => collectUsernamesFromPayload(item, targetSet, seen, depth + 1));
+      payload.forEach((item) => collectUsernamesFromPayload(item, targetSet, seen, depth + 1, insideListContainer));
       return;
     }
 
-    if (Object.prototype.hasOwnProperty.call(payload, "username")) {
+    if (insideListContainer && Object.prototype.hasOwnProperty.call(payload, "username")) {
       addUsername(payload.username, targetSet);
     }
 
@@ -110,14 +121,15 @@
 
       if (field === "edges" && Array.isArray(value)) {
         value.forEach((edge) => {
-          if (edge?.node) collectUsernamesFromPayload(edge.node, targetSet, seen, depth + 1);
+          if (edge?.node) collectUsernamesFromPayload(edge.node, targetSet, seen, depth + 1, true);
         });
         continue;
       }
 
-      collectUsernamesFromPayload(value, targetSet, seen, depth + 1);
+      collectUsernamesFromPayload(value, targetSet, seen, depth + 1, insideListContainer || field !== "data");
     }
   }
+  // [ig-walker:end]
 
   function decodeContent(content, encoding) {
     if (encoding !== "base64") return content || "";
@@ -140,6 +152,7 @@
       port = chrome.runtime.connect({ name: "ig-devtools-network" });
       stats.portConnected = true;
       stats.lastError = "";
+      stats.consecutiveFailures = 0;
       console.log("[IG DevTools] Port connected.");
 
       port.onMessage.addListener((message) => {
@@ -151,6 +164,7 @@
           stats.lastError = message.error || "relay-failed";
           console.log("[IG DevTools] relay ack failed:", message.ackType, stats.lastError, getStatsSnapshot());
         }
+        stats.consecutiveFailures = 0;
         pending.delete(message.seq);
       });
 
@@ -158,6 +172,7 @@
         const error = chrome.runtime.lastError?.message || "port-disconnected";
         stats.portConnected = false;
         stats.lastError = error;
+        stats.consecutiveFailures++;
         port = null;
         pending.clear();
         console.log("[IG DevTools] Port disconnected:", error);
@@ -165,6 +180,7 @@
     } catch (e) {
       stats.portConnected = false;
       stats.lastError = e?.message || "port-connect-failed";
+      stats.consecutiveFailures++;
       port = null;
       console.log("[IG DevTools] Port connect failed:", stats.lastError);
     }
@@ -283,10 +299,32 @@
     });
   });
 
+  chrome.devtools.network.onNavigated.addListener((url) => {
+    stats.navigations++;
+    stats.lastNavigatedAt = new Date().toISOString();
+    stats.matched = 0;
+    stats.sent = 0;
+    stats.ignored = 0;
+    stats.failed = 0;
+    console.log("[IG DevTools] inspected page navigated:", getSafeUrlLabel(url || ""), getStatsSnapshot());
+    sendStatus("navigated");
+  });
+
   console.log("[IG DevTools] Network response capture ready. Keep DevTools open, then reload/open Instagram lists.");
   connectPort();
   sendReady("initial");
   sendStatus("initial");
-  setInterval(() => sendReady("heartbeat"), READY_RETRY_MS);
-  setInterval(() => sendStatus("heartbeat"), STATUS_RETRY_MS);
+  const MAX_HEARTBEAT_BACKOFF_MS = 30000;
+  function heartbeatDelay(baseMs) {
+    if (stats.consecutiveFailures === 0) return baseMs;
+    return Math.min(baseMs * 2 ** stats.consecutiveFailures, MAX_HEARTBEAT_BACKOFF_MS);
+  }
+  function scheduleReadyHeartbeat() {
+    setTimeout(() => { sendReady("heartbeat"); scheduleReadyHeartbeat(); }, heartbeatDelay(READY_RETRY_MS));
+  }
+  function scheduleStatusHeartbeat() {
+    setTimeout(() => { sendStatus("heartbeat"); scheduleStatusHeartbeat(); }, heartbeatDelay(STATUS_RETRY_MS));
+  }
+  scheduleReadyHeartbeat();
+  scheduleStatusHeartbeat();
 }

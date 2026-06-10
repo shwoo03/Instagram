@@ -1117,6 +1117,10 @@
                 if (message.error) {
                     state.devtoolsBridge.lastError = message.error;
                 }
+                if (message.reason === "navigated") {
+                    recordRunEvent("devtools_capture_navigated", { at: message.capturedAt || null });
+                    console.log("🧭 DevTools 캡처 컨텍스트가 페이지 이동으로 초기화되었습니다. 수집 중이었다면 followers/following 목록을 다시 열어 주세요.");
+                }
 
                 const stats = message.stats || {};
                 const statusKey = JSON.stringify({
