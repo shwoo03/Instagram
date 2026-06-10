@@ -280,6 +280,16 @@
   }
 
   chrome.devtools.network.onRequestFinished.addListener((request) => {
+    const requestUrl = request?.request?.url || "";
+    const responseStatus = request?.response?.status || 0;
+    if (responseStatus === 429 && isInstagramUrl(requestUrl) && CANDIDATE_URL_RE.test(requestUrl)) {
+      stats.lastError = "rate-limited-429";
+      console.log("[IG DevTools] 429 rate limit observed:", getSafeUrlLabel(requestUrl));
+      sendStatus("rate-limited");
+      stats.ignored++;
+      return;
+    }
+
     if (!isCandidateRequest(request)) {
       stats.ignored++;
       return;

@@ -1,17 +1,3 @@
-function sendToInstagramTab(tabId, payload, sendResponse) {
-  chrome.tabs.sendMessage(tabId, payload, (response) => {
-    if (chrome.runtime.lastError) {
-      sendResponse({
-        ok: false,
-        error: chrome.runtime.lastError.message || "tabs-send-message-failed"
-      });
-      return;
-    }
-
-    sendResponse({ ok: true, response });
-  });
-}
-
 function getValidTabId(value) {
   const tabId = Number(value);
   return Number.isInteger(tabId) && tabId >= 0 ? tabId : null;
@@ -20,6 +6,16 @@ function getValidTabId(value) {
 function getSafeSourceLabel(payload) {
   const profile = payload?.profile || "unknown_profile";
   return `instagram-profile:${profile}`;
+}
+
+function isInstagramTabUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" &&
+      (parsed.hostname === "instagram.com" || parsed.hostname.endsWith(".instagram.com"));
+  } catch {
+    return false;
+  }
 }
 
 function sanitizeCollectionDiagnostics(value) {
@@ -73,6 +69,7 @@ function compactDebugReport(value) {
     executionMode: value.executionMode || "",
     followActionEnabled: Boolean(value.followActionEnabled),
     finalDiffPolicy: value.finalDiffPolicy || "",
+    rateLimit: value.rateLimit || null,
     overallReliability: value.overallReliability || "",
     accuracyMode: value.accuracyMode || null,
     warnings: Array.isArray(value.warnings) ? value.warnings.slice(0, 50) : [],
@@ -129,6 +126,12 @@ function getSafeRunSnapshot(payload) {
 }
 
 const devtoolsTabs = new Map();
+const DEVTOOLS_STATE_TTL_MS = 15000;
+
+function isFreshTimestamp(value, ttlMs = DEVTOOLS_STATE_TTL_MS) {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) && Date.now() - time <= ttlMs;
+}
 
 function getDevtoolsTabState(tabId) {
   const key = getValidTabId(tabId);
@@ -142,12 +145,16 @@ function setDevtoolsTabState(tabId, patch) {
   const current = devtoolsTabs.get(key) || {
     tabId: key,
     connected: false,
+    portConnected: false,
+    contentDelivered: false,
     readyCount: 0,
     statusCount: 0,
     payloadCount: 0,
     lastReadyAt: "",
     lastStatusAt: "",
     lastPayloadAt: "",
+    lastContentDeliveredAt: "",
+    disconnectedAt: "",
     lastError: "",
     stats: null
   };
@@ -163,7 +170,7 @@ function markDevtoolsMessageState(message) {
   if (message.type === "IG_DEVTOOLS_READY") {
     const current = getDevtoolsTabState(tabId);
     return setDevtoolsTabState(tabId, {
-      connected: true,
+      portConnected: true,
       readyCount: (current?.readyCount || 0) + 1,
       lastReadyAt: message.capturedAt || new Date().toISOString(),
       lastError: ""
@@ -173,7 +180,7 @@ function markDevtoolsMessageState(message) {
   if (message.type === "IG_DEVTOOLS_STATUS") {
     const current = getDevtoolsTabState(tabId);
     return setDevtoolsTabState(tabId, {
-      connected: true,
+      portConnected: true,
       statusCount: (current?.statusCount || 0) + 1,
       lastStatusAt: message.capturedAt || new Date().toISOString(),
       lastError: message.error || current?.lastError || "",
@@ -184,7 +191,7 @@ function markDevtoolsMessageState(message) {
   if (message.type === "IG_DEVTOOLS_USERNAMES") {
     const current = getDevtoolsTabState(tabId);
     return setDevtoolsTabState(tabId, {
-      connected: true,
+      portConnected: true,
       payloadCount: (current?.payloadCount || 0) + 1,
       lastPayloadAt: message.capturedAt || new Date().toISOString(),
       lastError: ""
@@ -196,7 +203,12 @@ function markDevtoolsMessageState(message) {
 
 function buildDevtoolsStatePayload(tabId, reason = "background-state") {
   const state = getDevtoolsTabState(tabId);
-  if (!state?.connected) return null;
+  const hasFreshPort = state?.portConnected && (
+    isFreshTimestamp(state.lastReadyAt) ||
+    isFreshTimestamp(state.lastStatusAt) ||
+    isFreshTimestamp(state.lastPayloadAt)
+  );
+  if (!hasFreshPort) return null;
   return {
     type: "IG_DEVTOOLS_READY",
     source: "devtools-network",
@@ -296,6 +308,11 @@ function relayDevtoolsMessageToTab(message, callback) {
 
   chrome.tabs.sendMessage(tabId, payload, (response) => {
     if (chrome.runtime.lastError) {
+      setDevtoolsTabState(tabId, {
+        connected: false,
+        contentDelivered: false,
+        lastError: chrome.runtime.lastError.message || "tabs-send-message-failed"
+      });
       callback({
         ok: false,
         error: chrome.runtime.lastError.message || "tabs-send-message-failed"
@@ -303,12 +320,18 @@ function relayDevtoolsMessageToTab(message, callback) {
       return;
     }
 
+    setDevtoolsTabState(tabId, {
+      connected: true,
+      contentDelivered: true,
+      lastContentDeliveredAt: new Date().toISOString(),
+      lastError: ""
+    });
     callback({ ok: true, response });
   });
 }
 
 chrome.action.onClicked.addListener((tab) => {
-  if (!tab.id || !tab.url || !tab.url.includes("instagram.com")) {
+  if (!tab.id || !tab.url || !isInstagramTabUrl(tab.url)) {
     return;
   }
 
@@ -321,6 +344,27 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "ig-devtools-network") {
     return;
   }
+
+  let connectedTabId = null;
+  port.onDisconnect.addListener(() => {
+    if (connectedTabId === null) return;
+    setDevtoolsTabState(connectedTabId, {
+      connected: false,
+      portConnected: false,
+      contentDelivered: false,
+      disconnectedAt: new Date().toISOString(),
+      lastError: "devtools-port-disconnected"
+    });
+    chrome.tabs.sendMessage(connectedTabId, {
+      type: "IG_DEVTOOLS_DISCONNECTED",
+      source: "devtools-network",
+      schemaVersion: 1,
+      reason: "devtools-port-disconnected",
+      capturedAt: new Date().toISOString()
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
 
   port.onMessage.addListener((message) => {
     if (!message || message.source !== "devtools-network" || message.schemaVersion !== 1) {
@@ -335,6 +379,9 @@ chrome.runtime.onConnect.addListener((port) => {
       return;
     }
 
+    const tabId = getValidTabId(message.tabId);
+    if (tabId !== null) connectedTabId = tabId;
+
     relayDevtoolsMessageToTab(message, (result) => {
       port.postMessage({
         type: "IG_DEVTOOLS_ACK",
@@ -347,6 +394,16 @@ chrome.runtime.onConnect.addListener((port) => {
       });
     });
   });
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  devtoolsTabs.delete(tabId);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading") {
+    devtoolsTabs.delete(tabId);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

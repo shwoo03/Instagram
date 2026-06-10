@@ -26,6 +26,10 @@
     const SCROLL_VERBOSE_EVERY_TICKS = 3;
     const DEVTOOLS_PREFLIGHT_GRACE_MS = 2200;
     const PAGE_NETWORK_AUTO_ASSIST_ENABLED = false;
+    const RATE_LIMIT_BASE_PAUSE_MS = 60_000;
+    const RATE_LIMIT_MAX_PAUSE_MS = 240_000;
+    const RATE_LIMIT_MAX_EVENTS = 3;
+    const RATE_LIMIT_DEDUP_WINDOW_MS = 10_000;
 
     const FOLLOWER_BUTTON_XPATH = "//a[contains(@href, '/followers/')] | //span[contains(text(), '팔로워')] | //span[contains(text(), 'Followers')]";
     const FOLLOWING_BUTTON_XPATH = "//a[contains(@href, '/following/')] | //span[contains(text(), '팔로잉')] | //span[contains(text(), 'Following')] | //span[contains(normalize-space(.), '팔로우') and .//span]";
@@ -140,6 +144,12 @@
         },
         activeCollectionMode: "followers",
         accuracyPreflight: null,
+        rateLimit: {
+            count: 0,
+            lastDetectedAtMs: 0,
+            pausedUntilMs: 0,
+            lastOrigin: null
+        },
         runTimeline: []
     };
 
@@ -162,6 +172,24 @@
 
     function shouldAbortLongTask(startedAt, maxMs = MAX_COLLECTION_MS) {
         return isRunSuperseded() || Date.now() - startedAt > maxMs;
+    }
+
+    function registerRateLimitSignal(origin) {
+        const now = Date.now();
+        if (state.rateLimit.lastDetectedAtMs && now - state.rateLimit.lastDetectedAtMs < RATE_LIMIT_DEDUP_WINDOW_MS) {
+            return;
+        }
+
+        state.rateLimit.count++;
+        state.rateLimit.lastDetectedAtMs = now;
+        state.rateLimit.lastOrigin = origin;
+        const pauseMs = Math.min(
+            RATE_LIMIT_BASE_PAUSE_MS * 2 ** (state.rateLimit.count - 1),
+            RATE_LIMIT_MAX_PAUSE_MS
+        );
+        state.rateLimit.pausedUntilMs = Math.max(state.rateLimit.pausedUntilMs, now + pauseMs);
+        recordRunEvent("rate_limit_detected", { origin, count: state.rateLimit.count, pauseMs });
+        console.log(`🚦 Instagram 요청 제한(429) 신호 감지 (출처: ${origin}, ${state.rateLimit.count}회째). 스크롤을 약 ${Math.round(pauseMs / 1000)}초 일시정지합니다.`);
     }
 
     function isVerboseLogging() {
@@ -407,6 +435,7 @@
             executionMode: EXECUTION_MODE,
             followActionEnabled: FOLLOW_ACTION_ENABLED,
             finalDiffPolicy: FINAL_DIFF_POLICY,
+            rateLimit: { ...state.rateLimit },
             overallReliability,
             warnings,
             accuracyMode,
@@ -759,6 +788,9 @@
                 state.pageNetworkBridge.lastStatusAt = message.capturedAt || new Date().toISOString();
                 state.pageNetworkBridge.lastStatus = message.reason || "";
                 state.pageNetworkBridge.lastError = message.reason && /failed|too-large/.test(message.reason) ? message.reason : null;
+                if (message.reason === "rate-limited") {
+                    registerRateLimitSignal("page-network");
+                }
 
                 if (message.reason !== "already-installed" && message.reason !== "ready-passive") {
                     console.log(`🧪 page network 브리지 상태: ${message.reason}`);
@@ -1005,8 +1037,12 @@
         const oldSend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.send = function() {
             this.addEventListener("load", () => {
-                if (this.status !== 200) return;
                 const url = this.responseURL || "";
+                if (this.status === 429 && FOLLOWERS_URL_RE.test(url) && !IGNORED_URL_RE.test(url)) {
+                    registerRateLimitSignal("page-hook");
+                    return;
+                }
+                if (this.status !== 200) return;
                 if (!FOLLOWERS_URL_RE.test(url) || IGNORED_URL_RE.test(url)) return;
                 const detectedMode = detectCollectionMode(url);
                 const mode = detectedMode || state.activeCollectionMode || "followers";
@@ -1120,6 +1156,9 @@
                 if (message.reason === "navigated") {
                     recordRunEvent("devtools_capture_navigated", { at: message.capturedAt || null });
                     console.log("🧭 DevTools 캡처 컨텍스트가 페이지 이동으로 초기화되었습니다. 수집 중이었다면 followers/following 목록을 다시 열어 주세요.");
+                }
+                if (message.reason === "rate-limited") {
+                    registerRateLimitSignal("devtools");
                 }
 
                 const stats = message.stats || {};
@@ -2467,6 +2506,7 @@
     async function reverifyCurrentListCollection(targetCount, targetSet, modeLabel, maxPasses = MAX_MISMATCH_REVERIFY_PASSES) {
         const baseLog = modeLabel === "following" ? "팔로잉" : "팔로워";
         const startedAt = Date.now();
+        let pausedTotalMs = 0;
         if (targetCount <= 0 || targetSet.size >= targetCount) {
             return { ok: true, passes: 0, finalCount: targetSet.size, reason: "already_complete" };
         }
@@ -2478,7 +2518,32 @@
                 state.lastScrollEndReason = "profile_changed";
                 return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
             }
-            if (shouldAbortLongTask(startedAt)) {
+            if (state.rateLimit.count > RATE_LIMIT_MAX_EVENTS) {
+                console.log(`🚦 ${baseLog} 요청 제한이 반복 감지되어 partial 종료합니다. 몇 분 뒤(권장 10분 이상) 다시 실행하세요.`);
+                state.lastScrollEndReason = "rate_limited";
+                return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "rate_limited" };
+            }
+            while (Date.now() < state.rateLimit.pausedUntilMs) {
+                const remainMs = state.rateLimit.pausedUntilMs - Date.now();
+                console.log(`🚦 요청 제한 대기 중: 약 ${Math.ceil(remainMs / 1000)}초 후 재개합니다.`);
+                const chunk = Math.min(remainMs, 5000);
+                pausedTotalMs += chunk;
+                await wait(chunk, 0);
+                if (hasProfileChanged()) {
+                    console.log(`🛑 ${baseLog} 재검증 중 프로필이 변경되어(${state.runProfile} → ${getProfileKey()}) 현재까지의 partial 결과로 종료합니다.`);
+                    state.lastScrollEndReason = "profile_changed";
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
+                }
+                if (isRunSuperseded()) {
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "run_superseded" };
+                }
+                if (state.rateLimit.count > RATE_LIMIT_MAX_EVENTS) {
+                    console.log(`🚦 ${baseLog} 요청 제한이 반복 감지되어 partial 종료합니다. 몇 분 뒤(권장 10분 이상) 다시 실행하세요.`);
+                    state.lastScrollEndReason = "rate_limited";
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "rate_limited" };
+                }
+            }
+            if (isRunSuperseded() || Date.now() - startedAt - pausedTotalMs > MAX_COLLECTION_MS) {
                 return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: isRunSuperseded() ? "run_superseded" : "time_cap_reached" };
             }
             if (!isUsableScrollBox(scrollBox)) {
@@ -2496,7 +2561,32 @@
                     state.lastScrollEndReason = "profile_changed";
                     return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
                 }
-                if (shouldAbortLongTask(startedAt)) {
+                if (state.rateLimit.count > RATE_LIMIT_MAX_EVENTS) {
+                    console.log(`🚦 ${baseLog} 요청 제한이 반복 감지되어 partial 종료합니다. 몇 분 뒤(권장 10분 이상) 다시 실행하세요.`);
+                    state.lastScrollEndReason = "rate_limited";
+                    return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "rate_limited" };
+                }
+                while (Date.now() < state.rateLimit.pausedUntilMs) {
+                    const remainMs = state.rateLimit.pausedUntilMs - Date.now();
+                    console.log(`🚦 요청 제한 대기 중: 약 ${Math.ceil(remainMs / 1000)}초 후 재개합니다.`);
+                    const chunk = Math.min(remainMs, 5000);
+                    pausedTotalMs += chunk;
+                    await wait(chunk, 0);
+                    if (hasProfileChanged()) {
+                        console.log(`🛑 ${baseLog} 재검증 중 프로필이 변경되어(${state.runProfile} → ${getProfileKey()}) 현재까지의 partial 결과로 종료합니다.`);
+                        state.lastScrollEndReason = "profile_changed";
+                        return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "profile_changed" };
+                    }
+                    if (isRunSuperseded()) {
+                        return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "run_superseded" };
+                    }
+                    if (state.rateLimit.count > RATE_LIMIT_MAX_EVENTS) {
+                        console.log(`🚦 ${baseLog} 요청 제한이 반복 감지되어 partial 종료합니다. 몇 분 뒤(권장 10분 이상) 다시 실행하세요.`);
+                        state.lastScrollEndReason = "rate_limited";
+                        return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "rate_limited" };
+                    }
+                }
+                if (isRunSuperseded() || Date.now() - startedAt - pausedTotalMs > MAX_COLLECTION_MS) {
                     return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: isRunSuperseded() ? "run_superseded" : "time_cap_reached" };
                 }
                 if (!isUsableScrollBox(scrollBox)) {
@@ -2547,6 +2637,7 @@
         let stableTicks = 0;
         let lastCount = 0;
         let recoveryAttempts = 0;
+        let pausedTotalMs = 0;
         const baseLog = modeLabel === "following" ? "팔로잉" : "팔로워";
 
         if (options.reset) targetSet.clear();
@@ -2570,7 +2661,20 @@
                 state.lastScrollEndReason = "profile_changed";
                 break;
             }
-            if (Date.now() - startedAt > MAX_COLLECTION_MS) {
+            if (state.rateLimit.count > RATE_LIMIT_MAX_EVENTS) {
+                console.log(`🚦 ${baseLog} 요청 제한이 반복 감지되어 partial 종료합니다. 몇 분 뒤(권장 10분 이상) 다시 실행하세요.`);
+                state.lastScrollEndReason = "rate_limited";
+                break;
+            }
+            if (Date.now() < state.rateLimit.pausedUntilMs) {
+                const remainMs = state.rateLimit.pausedUntilMs - Date.now();
+                console.log(`🚦 요청 제한 대기 중: 약 ${Math.ceil(remainMs / 1000)}초 후 재개합니다.`);
+                const chunk = Math.min(remainMs, 5000);
+                pausedTotalMs += chunk;
+                await wait(chunk, 0);
+                continue;
+            }
+            if (Date.now() - startedAt - pausedTotalMs > MAX_COLLECTION_MS) {
                 console.log(`⏱️ ${baseLog} 수집 시간이 길어져 안전 상한에서 partial 종료합니다.`);
                 state.lastScrollEndReason = "time_cap_reached";
                 break;
@@ -2960,6 +3064,9 @@
         if (diffs.integrity && !diffs.integrity.ok) {
             console.log("⚠️ 비교 계산 무결성 실패:", diffs.integrity.checks.filter((check) => !check.ok));
         }
+        if (state.rateLimit.count > 0) {
+            console.log(`🚦 요청 제한 감지 ${state.rateLimit.count}회: 일부 수집이 지연되었거나 중단되었습니다. 결과가 부족하면 몇 분 뒤 재실행하세요.`);
+        }
         const excludedFollowers = diffs.excludedFromCompare?.followersOvercountLowConfidence || [];
         const excludedFollowing = diffs.excludedFromCompare?.followingOvercountLowConfidence || [];
         if (excludedFollowers.length > 0 || excludedFollowing.length > 0) {
@@ -3053,6 +3160,9 @@
         console.log("🧪 팔로잉 열기:", summary.openedFollowing ? "성공" : "실패");
         if (summary.lastError) {
             console.log("⚠️ 마지막 실패 원인:", summary.lastError);
+        }
+        if (state.rateLimit.count > 0) {
+            console.log(`🚦 요청 제한 감지 ${state.rateLimit.count}회: 일부 수집이 지연되었거나 중단되었습니다. 결과가 부족하면 몇 분 뒤 재실행하세요.`);
         }
         if (summary.followersMismatchDiagnostic) {
             printCollectionDiagnostic(summary.followersMismatchDiagnostic);
@@ -3415,6 +3525,12 @@
         state.pageNetworkBridge.lastPayloadAt = null;
         state.pageNetworkBridge.autoEnabled = false;
         state.pageNetworkBridge.enableRequestedAt = null;
+        state.rateLimit = {
+            count: 0,
+            lastDetectedAtMs: 0,
+            pausedUntilMs: 0,
+            lastOrigin: null
+        };
         state.runTimeline = [];
         window.__igFollowerRunStartedAt = summary.startedAt;
         recordRunEvent("run_started", { runId: state.runId, startedAt: summary.startedAt });

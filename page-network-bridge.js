@@ -84,33 +84,47 @@
       }
     }
 
-    function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0) {
-      if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) return;
-      seen.add(payload);
 
-      if (Array.isArray(payload)) {
-        payload.forEach((item) => collectUsernamesFromPayload(item, targetSet, seen, depth + 1));
-        return;
-      }
-
-      if (Object.prototype.hasOwnProperty.call(payload, "username")) {
-        addUsername(payload.username, targetSet);
-      }
-
-      for (const field of ["users", "items", "edges", "nodes", "data"]) {
-        if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
-        const value = payload[field];
-
-        if (field === "edges" && Array.isArray(value)) {
-          value.forEach((edge) => {
-            if (edge?.node) collectUsernamesFromPayload(edge.node, targetSet, seen, depth + 1);
-          });
-          continue;
-        }
-
-        collectUsernamesFromPayload(value, targetSet, seen, depth + 1);
-      }
+    function looksLikeJsonUserPayload(text) {
+      if (!text || typeof text !== "string") return false;
+      const trimmed = text.trim();
+      if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false;
+      return /"username"|"users"|"items"|"edges"|"nodes"|"data"/.test(trimmed);
     }
+
+  // [ig-walker:start] 이 블록은 devtools.js / page-network-bridge.js 간 byte-identical 해야 함 (tools/walker-fixtures.mjs가 검증)
+  function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0, insideListContainer = false) {
+    if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) {
+      return;
+    }
+
+    seen.add(payload);
+
+    if (Array.isArray(payload)) {
+      payload.forEach((item) => collectUsernamesFromPayload(item, targetSet, seen, depth + 1, insideListContainer));
+      return;
+    }
+
+    if (insideListContainer && Object.prototype.hasOwnProperty.call(payload, "username")) {
+      addUsername(payload.username, targetSet);
+    }
+
+    const userListFields = ["users", "items", "edges", "nodes", "data"];
+    for (const field of userListFields) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const value = payload[field];
+
+      if (field === "edges" && Array.isArray(value)) {
+        value.forEach((edge) => {
+          if (edge?.node) collectUsernamesFromPayload(edge.node, targetSet, seen, depth + 1, true);
+        });
+        continue;
+      }
+
+      collectUsernamesFromPayload(value, targetSet, seen, depth + 1, insideListContainer || field !== "data");
+    }
+  }
+  // [ig-walker:end]
 
     function postResponse(url, bodyText, transport) {
       if (!bodyText || typeof bodyText !== "string") return;
@@ -118,6 +132,7 @@
         postStatus("body-too-large", { transport, bodyLength: bodyText.length });
         return;
       }
+      if (!looksLikeJsonUserPayload(bodyText)) return;
 
       let parsed;
       try {
@@ -164,6 +179,11 @@
         OriginalXHR.prototype.send = function() {
           this.addEventListener("load", function() {
             const url = this.__igFollowerRequestUrl || "";
+            // 429 관측은 page-network hooks가 명시적으로 enable된 경우에만 동작한다.
+            if (this.status === 429 && shouldInspectUrl(url)) {
+              postStatus("rate-limited", { transport: "page-XHR", httpStatus: 429 });
+              return;
+            }
             if (!shouldInspectUrl(url) || (this.responseType && this.responseType !== "text")) return;
 
             let responseText = "";
@@ -191,6 +211,12 @@
           }
 
           const response = await originalFetch.apply(window, args);
+
+          // 429 관측은 page-network hooks가 명시적으로 enable된 경우에만 동작한다.
+          if (response?.status === 429) {
+            postStatus("rate-limited", { transport: "page-fetch", httpStatus: 429 });
+            return response;
+          }
 
           if (response?.ok) {
             response.clone().text()
