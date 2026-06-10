@@ -30,6 +30,8 @@
     const RATE_LIMIT_MAX_PAUSE_MS = 240_000;
     const RATE_LIMIT_MAX_EVENTS = 3;
     const RATE_LIMIT_DEDUP_WINDOW_MS = 10_000;
+    const DOM_TIER_SOURCES = new Set(["DOM", "dom-observer"]);
+    const DOM_CANDIDATE_SOURCES = new Set(["dom-candidate", "dom-observer-candidate"]);
 
     const FOLLOWER_BUTTON_XPATH = "//a[contains(@href, '/followers/')] | //span[contains(text(), '팔로워')] | //span[contains(text(), 'Followers')]";
     const FOLLOWING_BUTTON_XPATH = "//a[contains(@href, '/following/')] | //span[contains(text(), '팔로잉')] | //span[contains(text(), 'Following')] | //span[contains(normalize-space(.), '팔로우') and .//span]";
@@ -352,7 +354,7 @@
                 if (targetSet.has(username)) return false;
                 const info = bucket?.get(username);
                 const sources = Array.from(info?.sources || []);
-                return sources.includes("dom-candidate");
+                return sources.some((source) => DOM_CANDIDATE_SOURCES.has(source));
             })
             .sort();
 
@@ -901,10 +903,10 @@
         for (const username of Array.from(confirmed)) {
             const info = bucket.get(username);
             const sources = Array.from(info?.sources || []);
-            if (sources.length === 0 || sources.some((source) => source !== "DOM")) continue;
+            if (sources.length === 0 || sources.some((source) => !DOM_TIER_SOURCES.has(source))) continue;
             confirmed.delete(username);
             state.candidateUsers[mode].add(username);
-            recordUsernameProvenance(username, mode, "DOM-candidate", {
+            recordUsernameProvenance(username, mode, "dom-candidate", {
                 confidence: "candidate",
                 reason,
                 phase: state.currentPhase
@@ -1687,6 +1689,65 @@
         return added;
     }
 
+    function createRowObserver(scrollBox) {
+        const queue = new Set();
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    if (!(node instanceof Element)) continue;
+                    const anchors = node.matches?.("a[href]")
+                        ? [node]
+                        : Array.from(node.querySelectorAll?.("a[href]") || []);
+                    for (const anchor of anchors) {
+                        const username = extractProfileUsername(anchor.getAttribute("href") || "");
+                        if (username && queue.size < 5000) queue.add(username);
+                    }
+                }
+            }
+        });
+        observer.observe(scrollBox, { childList: true, subtree: true });
+        return { observer, queue };
+    }
+
+    function drainObserverQueue(queue, targetSet, mode) {
+        if (!queue || queue.size === 0) return 0;
+        const networkConfirmedForMode = hasConfirmedNetworkEvidence(mode);
+        let added = 0;
+
+        for (const username of queue) {
+            if (networkConfirmedForMode && !targetSet.has(username)) {
+                addCandidateUsername(username, mode, "dom-observer-candidate", "observer-row-after-network-confirmed");
+                continue;
+            }
+            if (addUsername(username, targetSet, "dom-observer", mode, {
+                reason: "observer-added-row",
+                phase: `${mode}-observer`
+            })) {
+                added++;
+            }
+        }
+        queue.clear();
+        return added;
+    }
+
+    function createEndSentinel(scrollBox, endSignal) {
+        if (typeof IntersectionObserver !== "function") {
+            return {
+                observe() {},
+                unobserve() {},
+                disconnect() {}
+            };
+        }
+        return new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) {
+                    endSignal.visible = true;
+                    endSignal.atMs = Date.now();
+                }
+            }
+        }, { root: scrollBox, threshold: 0.6 });
+    }
+
     function getDOMUsernames(scrollBox, profileLinks = null) {
         const anchors = Array.isArray(profileLinks) ? profileLinks : getProfileLinksIn(scrollBox);
         return anchors
@@ -2324,6 +2385,7 @@
             at: new Date().toISOString(),
             count: currentCount,
             domAdded: beforeDom,
+            observerAdded: options.observerAdded || 0,
             domVisibleUserCount: domUsernames.length,
             lastVisibleUsers: domUsernames.slice(-5),
             scrollTop: Math.round(scrollBox.scrollTop),
@@ -2341,7 +2403,7 @@
 
         if (shouldLogDetailedProgress(diagnostic, beforeDom, stableTicks)) {
             console.log(
-                `🧭 ${modeLabel} 스크롤 진단: top=${diagnostic.scrollTop}, height=${diagnostic.scrollHeight}, client=${diagnostic.clientHeight}, visibleUsers=${diagnostic.domVisibleUserCount}, stable=${stableTicks}, last=${diagnostic.lastVisibleUsers.join(", ")}`
+                `🧭 ${modeLabel} 스크롤 진단: top=${diagnostic.scrollTop}, height=${diagnostic.scrollHeight}, client=${diagnostic.clientHeight}, visibleUsers=${diagnostic.domVisibleUserCount}, stable=${stableTicks}, observer 추가: ${diagnostic.observerAdded}, last=${diagnostic.lastVisibleUsers.join(", ")}`
             );
         }
 
@@ -2650,6 +2712,12 @@
             initialCount: targetSet.size
         });
 
+        let rowObserver = createRowObserver(scrollBox);
+        const endSignal = { visible: false, atMs: 0 };
+        let endSentinel = createEndSentinel(scrollBox, endSignal);
+        let observedLastAnchor = null;
+
+        try {
         while (true) {
             if (isRunSuperseded()) {
                 console.log(`🛑 ${baseLog} 수집이 새 실행으로 교체되어 현재 루프를 종료합니다.`);
@@ -2686,19 +2754,28 @@
             }
 
             const profileLinks = getProfileLinksIn(scrollBox);
+            const lastProfileLink = profileLinks.slice(-1)[0] || null;
+            if (lastProfileLink !== observedLastAnchor) {
+                if (observedLastAnchor) endSentinel.unobserve(observedLastAnchor);
+                if (lastProfileLink) endSentinel.observe(lastProfileLink);
+                observedLastAnchor = lastProfileLink;
+            }
+
             const beforeDom = collectFromDOM(scrollBox, targetSet, {
                 profileLinks,
                 phase: `${modeLabel}-scroll`,
                 scrollTick: state.scrollDiagnostics.length + 1
             });
+            const observerAdded = drainObserverQueue(rowObserver.queue, targetSet, modeLabel);
             const currentCount = targetSet.size;
             let diagnostic = recordScrollDiagnostic(scrollBox, modeLabel, currentCount, beforeDom, stableTicks, {
-                profileLinks
+                profileLinks,
+                observerAdded
             });
 
             if (shouldLogDetailedProgress(diagnostic, beforeDom, stableTicks)) {
                 console.log(
-                    `⏳ 현재 ${baseLog} ${currentCount}명 / 목표 ${targetDisplay}명 (DOM 추가: ${beforeDom}, 네트워크 실시간 반영)`
+                    `⏳ 현재 ${baseLog} ${currentCount}명 / 목표 ${targetDisplay}명 (DOM 추가: ${beforeDom}, observer 추가: ${observerAdded}, 네트워크 실시간 반영)`
                 );
             }
 
@@ -2717,14 +2794,14 @@
                 stableTicks
             });
             diagnostic.scrollStrategy = scrollStrategy;
-            const waitBase = beforeDom > 0 || currentCount !== lastCount
+            const waitBase = beforeDom > 0 || observerAdded > 0 || currentCount !== lastCount
                 ? 650
                 : stableTicks >= 2
                     ? 1400
                     : 950;
             await wait(waitBase, 300);
 
-            if (currentCount === lastCount && beforeDom === 0) {
+            if (currentCount === lastCount && beforeDom === 0 && observerAdded === 0) {
                 stableTicks++;
             } else {
                 stableTicks = 0;
@@ -2740,7 +2817,17 @@
             if (shouldAttemptScrollRecovery(currentCount, limitLabel, stableTicks, recoveryAttempts)) {
                 recoveryAttempts++;
                 const recovery = await attemptScrollRecovery(scrollBox, limitLabel, targetSet, modeLabel, recoveryAttempts, stableTicks);
+                const previousScrollBox = scrollBox;
                 scrollBox = recovery.scrollBox || scrollBox;
+                if (scrollBox !== previousScrollBox) {
+                    rowObserver.observer.disconnect();
+                    rowObserver = createRowObserver(scrollBox);
+                    endSentinel.disconnect();
+                    endSignal.visible = false;
+                    endSignal.atMs = 0;
+                    endSentinel = createEndSentinel(scrollBox, endSignal);
+                    observedLastAnchor = null;
+                }
                 if (recovery.recovered) {
                     stableTicks = 0;
                     lastCount = targetSet.size;
@@ -2758,11 +2845,19 @@
                     );
                 }
                 console.log("🧪 마지막 스크롤 진단:", diagnostic);
-                state.lastScrollEndReason = recoveryAttempts > 0 ? "stalled_after_recovery" : "stalled";
+                const endConfirmed = endSignal.visible && Date.now() - endSignal.atMs < 8000;
+                state.lastScrollEndReason = recoveryAttempts > 0
+                    ? "stalled_after_recovery"
+                    : endConfirmed ? "stalled_at_list_end" : "stalled";
+                if (endConfirmed) console.log(`✅ ${baseLog} 마지막 행이 화면에 보이는 상태로 정체 → 목록 끝 도달 가능성이 높습니다.`);
                 break;
             }
 
             await wait(stableTicks > 0 ? 300 : 150, 250);
+        }
+        } finally {
+            rowObserver.observer.disconnect();
+            endSentinel.disconnect();
         }
 
         const result = Array.from(targetSet);
@@ -2847,7 +2942,7 @@
                 const info = bucket?.get(username);
                 if (!info) return false;
                 const sources = Array.from(info.sources || []);
-                return sources.length > 0 && sources.every((source) => source === "DOM");
+                return sources.length > 0 && sources.every((source) => DOM_TIER_SOURCES.has(source));
             })
             .sort((a, b) => {
                 const aCreatesDiff = oppositeSet.has(a) ? 1 : 0;
