@@ -57,6 +57,12 @@ node tools/walker-fixtures.mjs
 node tools/compare-fixtures.mjs
 ```
 
+Optional local e2e gate after `npm install`:
+
+```bash
+npm run e2e
+```
+
 If validation cannot be run, record why in `docs/HANDOFF.md`.
 
 Manual browser check:

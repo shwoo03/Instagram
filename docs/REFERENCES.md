@@ -112,9 +112,30 @@ affect this Chrome extension.
 
 ## 2026-06-11 Platform Stability Addendum
 
+### Service worker state mirroring
+
+- URL: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+- Use for: MV3 service worker shutdown/restart behavior and avoiding reliance on globals.
+- Decision: mirror DevTools bridge tab state from the in-memory Map into `chrome.storage.session` and hydrate before content preflight reads. Existing freshness TTL still decides whether hydrated state is usable.
+- Status: adopted.
+
+### storage.session quota guard
+
+- URL: https://developer.chrome.com/docs/extensions/reference/api/storage
+- Use for: `chrome.storage.session` capacity limits and safe snapshot persistence.
+- Decision: keep profile snapshots under a conservative per-snapshot budget, expose `storage.truncatedSections`, store lastRun as a `{ ref }` record, and retry once with a minimal derived snapshot on quota errors. Do not add `unlimitedStorage`.
+- Status: adopted.
+
 ### Minimum Chrome version
 
 - URL: https://developer.chrome.com/docs/extensions/reference/manifest
 - Use for: declaring the minimum Chrome version needed by the extension runtime.
 - Decision: set `minimum_chrome_version` to `114` because the extension depends on MV3 scripting/storage.session-era APIs and service-worker Port lifetime behavior documented for modern Chrome. This is not a permission change.
 - Status: adopted.
+
+### Puppeteer extension e2e harness
+
+- URL: https://developer.chrome.com/docs/extensions/how-to/test/puppeteer
+- Use for: loading an unpacked extension in Chrome during local development tests.
+- Decision: adopt `puppeteer` as a devDependency only. The e2e test build copies runtime files into `tools/e2e/.build/` and adds localhost `host_permissions` only to that copied manifest; deployment manifest permissions remain unchanged.
+- Status: adopted as local harness; current environment still needs a successful `npm run e2e` run.

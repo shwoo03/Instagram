@@ -1,0 +1,11 @@
+{
+  "name": "ig-follower-comparator-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "node tools/e2e/run.mjs"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}

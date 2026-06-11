@@ -134,3 +134,22 @@ Manual Chrome validation was not run from this environment because it requires t
 7. 429 synthetic signal: during a run, inject `window.postMessage({ source: "ig-page-network-bridge", schemaVersion: 1, type: "IG_PAGE_NETWORK_STATUS", reason: "rate-limited", capturedAt: new Date().toISOString() }, "*");` and confirm 60/120/240s pause behavior, then `rate_limited` partial exit on the fourth non-deduped signal.
 8. DevTools-closed flow: confirm `DOM_PREVIEW` behavior remains unchanged.
 9. Confirm `chrome://extensions` error panel has no new warn/error noise for expected degraded states.
+
+## 2026-06-11 Platform Stability Implementation Pass
+
+- Implemented `docs/PLATFORM_STABILITY_PLAN_2026-06-11.md` in order through R6, R5, M1, and R8.
+- R6: `background.js` now budgets session snapshots, records `storage.truncatedSections`, retries quota errors once with a minimal derived snapshot, and stores `ig_follower_snapshot:lastRun` as `{ ref, profile, runId, collectedAt, approxBytes }` instead of duplicating the full snapshot. `main.js` prints Korean storage-size and truncation messages.
+- R5: DevTools tab state is mirrored into `chrome.storage.session` under `ig_devtools_tabs_state:v1`; content preflight waits for hydration before reading the state. The existing 15s freshness TTL still gates stale entries.
+- M1: deployment `manifest.json` now sets `minimum_chrome_version` to `114`; permissions were not changed.
+- R8: added a local Puppeteer harness (`package.json`, `package-lock.json`, `tools/e2e/*`) that builds a copied test extension with localhost-only `host_permissions`, serves synthetic `e2e_user_###` fixture pages, and defines scenarios A-D plus storage ref scenario E.
+- `npm install` initially failed while downloading Chromium (`ECONNRESET`). `PUPPETEER_SKIP_DOWNLOAD=1 npm install` succeeded using the local `/Applications/Google Chrome.app`.
+- `npm run e2e` did not pass in this environment. Chrome loads the extension service worker, but `chrome.scripting.executeScript` against the local fixture tab fails/detaches with `Frame with ID 0 was removed`. I stopped further browser launches after user concern and left the harness plus failure notes for follow-up.
+- Static validation passed: `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node --check tools/e2e/build-test-extension.mjs`, `node --check tools/e2e/fixture-server.mjs`, `node --check tools/e2e/run.mjs`, `node tools/walker-fixtures.mjs`, and `node tools/compare-fixtures.mjs`.
+- Runtime 4 scripts had no R8 diff, and deployment `manifest.json` had no R8 diff. The only deployment manifest change in this pass is M1's `minimum_chrome_version`.
+
+Remaining platform checks:
+
+1. In Chrome extension SW inspector, verify `chrome.storage.session.get("ig_devtools_tabs_state:v1")` mirrors current DevTools tab state after DevTools heartbeats.
+2. After a real run, verify `chrome.storage.session.get("ig_follower_snapshot:lastRun")` returns a `{ ref }` record and the referenced profile snapshot exists.
+3. Re-run `npm run e2e` in an environment where Puppeteer extension script injection into `127.0.0.1` fixture pages succeeds; scenarios A-D should pass, E may pass or skip.
+4. Manual Chrome standard flow remains required for real Instagram DOM/network behavior.

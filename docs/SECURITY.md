@@ -40,6 +40,7 @@ Current permissions should stay minimal:
 
 - `activeTab`
 - `scripting`
+- `storage`
 
 Avoid adding high-risk permissions unless there is a clear adoption record:
 
@@ -72,6 +73,10 @@ automation for this extension by default. If one becomes necessary, document:
 Allowed runtime storage should be limited to derived result snapshots and
 diagnostics. Do not persist raw DevTools response bodies, cookies, request
 headers, auth state, private messages, or unrelated profile data.
+
+## E2E Test Build Boundary
+
+The Puppeteer e2e harness may create a copied extension under `tools/e2e/.build/` with localhost-only `host_permissions` for synthetic fixture pages. That permission is test-build only and must not be added to the deployment `manifest.json`. The fixture uses only generated `e2e_user_###` usernames and must not copy real Instagram markup, cookies, headers, raw payloads, or account data.
 
 ## 2026-06-06 Privacy and Harness Notes
 

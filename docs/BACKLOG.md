@@ -55,7 +55,7 @@
 - Open: add local regression fixtures for exact-network pass, recursive-payload false positive, one-sided DevTools, connected-no-payload, and bounded fallback. `tools/compare-fixtures.mjs` now covers compare integrity, DOM-overcount exclusion, DOM observer tiering, and evidence ranking.
 - Done: rank DOM fallback promotions and overcount exclusions by evidence strength instead of stable sort order (`R10`, `tools/compare-fixtures.mjs`).
 - Open: persist compact `lastEvidence` or bounded `recentEvidence` tail in sanitized session snapshots.
-- Open: compact every large stored snapshot section with explicit limits and `truncated` flags.
+- Done: compact every large stored snapshot section with explicit limits and `truncated` flags (`R6`, 2026-06-11).
 
 ## 2026-06-10 Stability/Performance Plan
 
@@ -90,3 +90,11 @@ Notes on prior 2026-06-07 open items:
 - Done: R3 adds MutationObserver row capture and IntersectionObserver list-end diagnostics while keeping observer evidence in the DOM tier.
 - Done: R10 ranks DOM fallback promotion/exclusion by evidence strength and adds `tools/compare-fixtures.mjs`.
 - Open: run the manual Chrome checklist from `docs/COLLECTION_RESILIENCE_PLAN_2026-06-10.md` section 2.
+
+## 2026-06-11 Platform Stability
+
+- Done: R6 adds a `chrome.storage.session` snapshot budget, stepwise truncation flags, minimal quota fallback, and `{ ref }` lastRun storage.
+- Done: R5 mirrors `devtoolsTabs` into `chrome.storage.session` and hydrates it before content preflight reads.
+- Done: M1 adds `minimum_chrome_version: "114"` without changing deployment permissions.
+- Partial: R8 adds the Puppeteer e2e harness, fixture server, test extension builder, `package.json`, and lockfile. `npm install` succeeded only with `PUPPETEER_SKIP_DOWNLOAD=1` using local Chrome; `npm run e2e` currently fails in this environment during extension script injection with `Frame with ID 0 was removed`.
+- Open: rerun `npm run e2e` in a Chrome/Puppeteer environment where extension `chrome.scripting.executeScript` against the local fixture tab completes. Scenarios A-D should pass; E may pass or skip.

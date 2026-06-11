@@ -1,6 +1,6 @@
 # 슈퍼 확장 리서치 노트 — 2026-06-10 (정확도·안정성 심화)
 
-공식 문서와 베스트 프랙티스 조사 결과. 각 항목은 `소스 → 발견 → 제안 → 우선순위` 구조로 기록한다. 2026-06-10 구현 패스에서 R2/R3/R4/R7/R10은 adopted로 전환했고, 채택 근거는 `docs/REFERENCES.md`와 `docs/BACKLOG.md`에 연결했다.
+공식 문서와 베스트 프랙티스 조사 결과. 각 항목은 `소스 → 발견 → 제안 → 우선순위` 구조로 기록한다. 2026-06-10 구현 패스에서 R2/R3/R4/R7/R10은 adopted로 전환했고, 2026-06-11 플랫폼 안정성 패스에서 R5/R6/R8도 adopted로 전환했다. 채택 근거는 `docs/REFERENCES.md`와 `docs/BACKLOG.md`에 연결했다.
 
 전제: 2026-06-07 정확도 연구(evidence 게이팅, walker 컨테이너 제한)와 2026-06-10 안정성/성능 계획(`docs/STABILITY_PERF_PLAN_2026-06-10.md`)의 항목 대부분은 이미 작업 트리에 반영됨을 확인했다(`isRunSuperseded`, `isDevtoolsBridgeFresh`, `MAX_COLLECTION_MS`, `sourceCountsCache`, `buildSessionMessagePayload`, walker 센티널+fixture 등). 단 S3(modal_closed 감지)과 P1(scrollBox 캐시/2-pass)은 흔적이 없거나 부분적이므로 구현 여부를 회귀 체크리스트로 재확인할 것.
 
@@ -66,6 +66,8 @@
 
 ## R5. 서비스 워커 무상태화 — background 상태의 storage.session 영속화
 
+- 상태: **adopted** (2026-06-11, 구현 R5)
+
 - 소스 (공식): https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
 - 발견 (정확한 규칙):
   - SW는 **유휴 30초** 후 종료. 이벤트 수신/확장 API 호출이 타이머를 리셋(Chrome 110+).
@@ -78,6 +80,8 @@
 - 우선순위: **5**
 
 ## R6. storage.session quota 가드 + truncated 플래그
+
+- 상태: **adopted** (2026-06-11, 구현 R6)
 
 - 소스 (공식): https://developer.chrome.com/docs/extensions/reference/api/storage — `storage.session` QUOTA_BYTES ≈ **10MB**(메모리 저장), `getBytesInUse()` 지원.
 - 발견: 현재 `storeRunSnapshot`은 set() 실패를 에러 문자열로만 보고한다. 수만 팔로워 계정이면 압축 후에도 한도 초과 가능.
@@ -94,6 +98,8 @@
 - 우선순위: **7**
 
 ## R8. Puppeteer 기반 로컬 e2e 회귀 하네스
+
+- 상태: **adopted** (2026-06-11, 구현 R8; 현재 환경의 `npm run e2e`는 Chrome/Puppeteer extension injection 오류로 미통과)
 
 - 소스 (공식):
   - https://developer.chrome.com/docs/extensions/how-to/test/puppeteer (unpacked 확장 로드, `enableExtensions`/`--load-extension`)

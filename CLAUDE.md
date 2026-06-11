@@ -25,6 +25,12 @@ node tools/walker-fixtures.mjs
 node tools/compare-fixtures.mjs
 ```
 
+Optional local e2e gate after `npm install`:
+
+```bash
+npm run e2e
+```
+
 There is no test suite, no bundler, and no lint config — `node --check` is the only automated gate. Real correctness comes from the manual Chrome flow: reload the unpacked extension at `chrome://extensions`, reload the Instagram profile tab, open DevTools **before** opening the followers/following modal, click the extension action, then read the Korean console summary plus the bridge status logs. If validation can't be run, record why in `docs/HANDOFF.md`.
 
 ## Architecture: the four scripts and how they exchange usernames
