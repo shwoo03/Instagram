@@ -7,6 +7,7 @@
     const IGNORED_URL_RE = /(edge-chat|mqtt|realtime|presence|logging|analytics|beacon|direct_v2|\/direct\/|upload|media\/upload)/i;
     const MAX_BODY_CHARS = 512_000;
     const MAX_STABLE_TICKS = 16;
+    const DISPLAYED_COUNT_GAP_TOLERANCE = 5; // 표시 수와 목록 끝 확정 수집 수의 허용 격차(비활성 계정 추정 범위)
     const MAX_FOLLOW_STABLE_TICKS = 12;
     const MAX_MISMATCH_REVERIFY_PASSES = 1;
     const LIST_SETTLE_REQUIRED_TICKS = 3;
@@ -343,6 +344,21 @@
             (counts["page-XHR"] || 0) > 0 ||
             (counts["page-fetch"] || 0) > 0
         );
+    }
+
+    // [ig-compare:assess] tools/compare-fixtures.mjs가 이 함수를 추출해 검증한다. state 접근 금지(순수 함수 유지).
+    function assessListCompletion({ expectedCount, verifiedCount, endReason, hasNetworkEvidence, nonDomCandidateCount }) {
+        const gap = expectedCount > 0 ? expectedCount - verifiedCount : 0;
+        const listEndConfirmed = endReason === "stalled_at_list_end" || endReason === "target_reached";
+        const completeAtListEnd = Boolean(
+            expectedCount > 0 &&
+            gap > 0 &&
+            gap <= DISPLAYED_COUNT_GAP_TOLERANCE &&
+            listEndConfirmed &&
+            hasNetworkEvidence &&
+            nonDomCandidateCount === 0
+        );
+        return { gap, listEndConfirmed, completeAtListEnd };
     }
 
     function compareCandidateEvidence(aInfo, bInfo) {
@@ -3094,6 +3110,24 @@
     function getUnconfirmedCandidates(mode) {
         const confirmed = mode === "following" ? state.followingUsers : state.collectedUsers;
         return Array.from(state.candidateUsers[mode]).filter((username) => !confirmed.has(username)).sort();
+    }
+
+    function getListCompletionAssessment(mode, expectedCount) {
+        const verifiedCount = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
+        const endReason = mode === "following" ? state.lastFollowingScrollEndReason : state.lastFollowersScrollEndReason;
+        const domTierCandidateFilter = (username) => {
+            const sources = Array.from(state.userProvenance[mode]?.get(username)?.sources || []);
+            return sources.length > 0 && sources.every((source) => DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source));
+        };
+        const candidates = getUnconfirmedCandidates(mode);
+        const nonDomCandidateCount = candidates.filter((username) => !domTierCandidateFilter(username)).length;
+        return assessListCompletion({
+            expectedCount: expectedCount || 0,
+            verifiedCount,
+            endReason,
+            hasNetworkEvidence: hasConfirmedNetworkEvidence(mode),
+            nonDomCandidateCount
+        });
     }
 
     function printCandidateUsers() {

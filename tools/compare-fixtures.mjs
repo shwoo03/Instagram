@@ -5,9 +5,11 @@ function loadWalkerFrom(file, functionName) {
   const text = fs.readFileSync(file, 'utf8');
   const start = text.indexOf(`function ${functionName}`);
   assert.notEqual(start, -1, `${file}: missing ${functionName}`);
+  const bodyStart = text.indexOf('{', text.indexOf(')', start));
+  assert.notEqual(bodyStart, -1, `${file}: missing ${functionName} body`);
   let depth = 0;
   let end = -1;
-  for (let i = text.indexOf('{', start); i < text.length; i++) {
+  for (let i = bodyStart; i < text.length; i++) {
     if (text[i] === '{') depth++;
     if (text[i] === '}') {
       depth--;
@@ -31,6 +33,49 @@ function sourceInfo({ seenCount = 1, sources = ['DOM'], lastSeenAt = '2026-01-01
 
 const compareCandidateEvidenceSource = loadWalkerFrom('main.js', 'compareCandidateEvidence');
 const compareCandidateEvidence = new Function(`${compareCandidateEvidenceSource}; return compareCandidateEvidence;`)();
+
+const assessListCompletionSource = loadWalkerFrom('main.js', 'assessListCompletion');
+const assessListCompletion = new Function(`
+  const DISPLAYED_COUNT_GAP_TOLERANCE = 5;
+  ${assessListCompletionSource}
+  return assessListCompletion;
+`)();
+
+assert.equal(assessListCompletion({
+  expectedCount: 287,
+  verifiedCount: 285,
+  endReason: 'stalled_at_list_end',
+  hasNetworkEvidence: true,
+  nonDomCandidateCount: 0
+}).completeAtListEnd, true);
+assert.equal(assessListCompletion({
+  expectedCount: 287,
+  verifiedCount: 285,
+  endReason: 'stalled',
+  hasNetworkEvidence: true,
+  nonDomCandidateCount: 0
+}).completeAtListEnd, false);
+assert.equal(assessListCompletion({
+  expectedCount: 287,
+  verifiedCount: 281,
+  endReason: 'stalled_at_list_end',
+  hasNetworkEvidence: true,
+  nonDomCandidateCount: 0
+}).completeAtListEnd, false);
+assert.equal(assessListCompletion({
+  expectedCount: 287,
+  verifiedCount: 285,
+  endReason: 'stalled_at_list_end',
+  hasNetworkEvidence: false,
+  nonDomCandidateCount: 0
+}).completeAtListEnd, false);
+assert.equal(assessListCompletion({
+  expectedCount: 287,
+  verifiedCount: 285,
+  endReason: 'stalled_at_list_end',
+  hasNetworkEvidence: true,
+  nonDomCandidateCount: 1
+}).completeAtListEnd, false);
 
 assert(compareCandidateEvidence(sourceInfo({ seenCount: 5 }), sourceInfo({ seenCount: 3 })) < 0);
 assert(compareCandidateEvidence(sourceInfo({ seenCount: 3 }), sourceInfo({ seenCount: 5 })) > 0);
