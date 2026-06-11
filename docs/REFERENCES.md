@@ -109,3 +109,12 @@ affect this Chrome extension.
 - Use for: `chrome.devtools.network.onNavigated` and the limitation that DevTools misses requests made before DevTools was opened.
 - Decision: reset per-page DevTools capture counters on navigation and relay `reason: "navigated"` so the page console can tell the operator to reopen followers/following lists.
 - Status: adopted.
+
+## 2026-06-11 Platform Stability Addendum
+
+### Minimum Chrome version
+
+- URL: https://developer.chrome.com/docs/extensions/reference/manifest
+- Use for: declaring the minimum Chrome version needed by the extension runtime.
+- Decision: set `minimum_chrome_version` to `114` because the extension depends on MV3 scripting/storage.session-era APIs and service-worker Port lifetime behavior documented for modern Chrome. This is not a permission change.
+- Status: adopted.

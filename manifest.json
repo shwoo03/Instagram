@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Instagram Follower Comparator",
   "version": "1.0.7",
+  "minimum_chrome_version": "114",
   "description": "인스타그램 팔로워/팔로잉을 수집해 맞팔·미팔로우를 비교하고 결과 신뢰도를 출력하는 확장",
   "permissions": [
     "activeTab",
