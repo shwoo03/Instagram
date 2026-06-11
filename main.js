@@ -419,25 +419,30 @@
         const verifiedCount = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
         const candidateCount = getUnconfirmedCandidates(mode).length;
         const coverageRatio = expectedCount > 0 ? verifiedCount / expectedCount : null;
+        const completion = getListCompletionAssessment(mode, expectedCount);
+        const label = mode === "following" ? "팔로잉" : "팔로워";
         const warnings = [];
         let status = "COMPLETENESS_UNKNOWN";
 
         if (expectedCount > 0 && verifiedCount === expectedCount && candidateCount === 0) {
             status = "COMPLETE_HIGH_CONFIDENCE";
+        } else if (expectedCount > 0 && verifiedCount < expectedCount && completion.completeAtListEnd) {
+            status = "COMPLETE_AT_LIST_END";
+            warnings.push(`${label}가 화면 표시 수보다 ${completion.gap}명 적지만 목록 끝 도달이 확인되었습니다. 표시 수에 비활성화/탈퇴 계정이 포함됐을 가능성이 높아 diff 신뢰도에는 영향이 없습니다.`);
         } else if (expectedCount > 0 && Math.abs(expectedCount - verifiedCount) <= 2) {
             status = "COMPLETE_BUT_LOW_MARGIN";
             if (verifiedCount !== expectedCount) {
-                warnings.push(`${mode === "following" ? "팔로잉" : "팔로워"} 검증 수가 화면 표시 수와 ${Math.abs(expectedCount - verifiedCount)}명 차이납니다.`);
+                warnings.push(`${label} 검증 수가 화면 표시 수와 ${Math.abs(expectedCount - verifiedCount)}명 차이납니다.`);
             }
             if (candidateCount > 0) {
-                warnings.push(`${mode === "following" ? "팔로잉" : "팔로워"} 검증 필요 후보 ${candidateCount}명은 final diff에서 제외했습니다.`);
+                warnings.push(`${label} 검증 필요 후보 ${candidateCount}명은 final diff에서 제외했습니다.`);
             }
         } else if (expectedCount > 0 && verifiedCount < expectedCount) {
             status = "PARTIAL_TRUSTED";
-            warnings.push(`${mode === "following" ? "팔로잉" : "팔로워"}가 화면 표시 수보다 ${expectedCount - verifiedCount}명 적게 검증되었습니다.`);
+            warnings.push(`${label}가 화면 표시 수보다 ${expectedCount - verifiedCount}명 적게 검증되었습니다.`);
         } else if (candidateCount > 0) {
             status = "PARTIAL_UNTRUSTED";
-            warnings.push(`${mode === "following" ? "팔로잉" : "팔로워"} 검증 필요 후보 ${candidateCount}명이 있어 과수집 가능성을 final diff에서 제외했습니다.`);
+            warnings.push(`${label} 검증 필요 후보 ${candidateCount}명이 있어 과수집 가능성을 final diff에서 제외했습니다.`);
         }
 
         return {
@@ -447,7 +452,8 @@
             coverageRatio,
             status,
             warnings,
-            sourceCounts: getSourceCounts(mode)
+            sourceCounts: getSourceCounts(mode),
+            completion
         };
     }
 
@@ -462,6 +468,8 @@
             overallReliability = "PARTIAL_UNTRUSTED";
         } else if (followers.status.includes("PARTIAL") || following.status.includes("PARTIAL")) {
             overallReliability = "PARTIAL_TRUSTED";
+        } else if (followers.status === "COMPLETE_AT_LIST_END" || following.status === "COMPLETE_AT_LIST_END") {
+            overallReliability = "COMPLETE_AT_LIST_END";
         } else if (followers.status === "COMPLETE_BUT_LOW_MARGIN" || following.status === "COMPLETE_BUT_LOW_MARGIN") {
             overallReliability = "COMPLETE_BUT_LOW_MARGIN";
         }
@@ -3238,8 +3246,8 @@
         const compareCounts = diffs.compareCounts || {};
         const expectedFollowers = summary.expectedFollowersCount || state.expectedCounts.followers || 0;
         const expectedFollowing = summary.expectedFollowingCount || state.expectedCounts.following || 0;
-        const followersMatch = !expectedFollowers || compareCounts.followers === expectedFollowers;
-        const followingMatch = !expectedFollowing || compareCounts.following === expectedFollowing;
+        const followersMatch = !expectedFollowers || compareCounts.followers === expectedFollowers || summary.followersCompletion?.completeAtListEnd === true;
+        const followingMatch = !expectedFollowing || compareCounts.following === expectedFollowing || summary.followingCompletion?.completeAtListEnd === true;
         let trustGate = "참고용 결과";
         if (diffs.integrity && !diffs.integrity.ok) {
             trustGate = "계산 무결성 확인 필요";
@@ -3351,9 +3359,15 @@
         }
         if (summary.expectedFollowersCount !== null && summary.expectedFollowersCount !== undefined) {
             console.log(`🧮 팔로워 수량 차이: ${summary.followersCount - summary.expectedFollowersCount}명`);
+            if (summary.followersCompletion?.completeAtListEnd) {
+                console.log(`🧮 팔로워 차이 해석: 목록 끝 확정 - 비활성 계정 포함 추정 (${summary.followersCompletion.gap}명)`);
+            }
         }
         if (summary.expectedFollowingCount !== null && summary.expectedFollowingCount !== undefined) {
             console.log(`🧮 팔로잉 수량 차이: ${summary.followingCount - summary.expectedFollowingCount}명`);
+            if (summary.followingCompletion?.completeAtListEnd) {
+                console.log(`🧮 팔로잉 차이 해석: 목록 끝 확정 - 비활성 계정 포함 추정 (${summary.followingCompletion.gap}명)`);
+            }
         }
         if (summary.followersCollectionStatus) {
             console.log("🧪 팔로워 수집 상태:", summary.followersCollectionStatus);
