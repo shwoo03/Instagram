@@ -420,6 +420,13 @@
         return promoted;
     }
 
+    function withSubjectParticle(word) {
+        const text = String(word || "");
+        const lastChar = text.charCodeAt(text.length - 1);
+        if (Number.isNaN(lastChar) || lastChar < 0xac00 || lastChar > 0xd7a3) return `${text}가`;
+        return (lastChar - 0xac00) % 28 === 0 ? `${text}가` : `${text}이`;
+    }
+
     function getListReliability(mode, expectedCount = 0) {
         const verifiedCount = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
         const candidateCount = getUnconfirmedCandidates(mode).length;
@@ -433,7 +440,7 @@
             status = "COMPLETE_HIGH_CONFIDENCE";
         } else if (expectedCount > 0 && verifiedCount < expectedCount && completion.completeAtListEnd) {
             status = "COMPLETE_AT_LIST_END";
-            warnings.push(`${label}가 화면 표시 수보다 ${completion.gap}명 적지만 목록 끝 도달이 확인되었습니다. 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정되어 diff 신뢰도에는 영향이 없습니다.`);
+            warnings.push(`${withSubjectParticle(label)} 화면 표시 수보다 ${completion.gap}명 적지만 목록 끝 도달이 확인되었습니다. 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정되어 diff 신뢰도에는 영향이 없습니다.`);
         } else if (expectedCount > 0 && Math.abs(expectedCount - verifiedCount) <= 2) {
             status = "COMPLETE_BUT_LOW_MARGIN";
             if (verifiedCount !== expectedCount) {
@@ -444,7 +451,7 @@
             }
         } else if (expectedCount > 0 && verifiedCount < expectedCount) {
             status = "PARTIAL_TRUSTED";
-            warnings.push(`${label}가 화면 표시 수보다 ${expectedCount - verifiedCount}명 적게 검증되었습니다.`);
+            warnings.push(`${withSubjectParticle(label)} 화면 표시 수보다 ${expectedCount - verifiedCount}명 적게 검증되었습니다.`);
         } else if (candidateCount > 0) {
             status = "PARTIAL_UNTRUSTED";
             warnings.push(`${label} 검증 필요 후보 ${candidateCount}명이 있어 과수집 가능성을 final diff에서 제외했습니다.`);

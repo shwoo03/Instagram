@@ -157,7 +157,8 @@ Remaining platform checks:
 ## 2026-06-11 List-end Accuracy Pass
 
 - Implemented `docs/LIST_END_ACCURACY_PLAN_2026-06-11.md` in order through A1-A7.
-- Analysis conclusion for the latest real profile run: the true comparable shape is 285 followers / 285 following. The displayed 287/287 header is now treated as likely including inactive/deleted accounts when DevTools/page-network evidence and DOM list-end evidence agree that the list is exhausted.
+- Follow-up real Chrome run verified the A pass successfully: 285 followers / 285 following, final diff 0/0, status `completed_at_list_end`, and trust gate `확정 비교 가능`.
+- Analysis conclusion for the latest real profile run: the true comparable shape is 285 followers / 285 following. The displayed 287/287 header is now treated as likely including accounts counted by the counter but not returned by the list API when DevTools/page-network evidence and DOM list-end evidence agree that the list is exhausted.
 - The previous 287/287 pass-shape note is stale for this account's current state. The expected post-fix pass shape is DevTools 285/285, final diff 0/0, status `completed_at_list_end`, trust gate `확정 비교 가능`, with `haeunieii` and `won_donghwi` remaining candidate diagnostics only, not final diff members.
 - Runtime behavior changed conservatively: bounded DOM fallback still exists for ordinary shortfall cases, but it is skipped when a small displayed-count gap is explained by confirmed list end. `dom-fallback`-only one-sided diff members are excluded from final diff to prevent false positives.
 - Expected operator-visible improvement: reverify and DOM promotion logs should not appear in this list-end confirmed case, and scroll should stop after roughly 6 stable ticks once the visible end is confirmed, reducing runtime.
@@ -177,3 +178,13 @@ Remaining list-end accuracy manual checklist:
 7. Confirm `haeunieii` and `won_donghwi` are absent from final diff and only visible through candidate/provenance diagnostics if present.
 8. Run a DevTools-closed `DOM_PREVIEW` check and confirm the existing partial/fallback behavior is unchanged.
 9. Confirm `chrome://extensions` has no new warn/error panel noise for expected degraded states.
+
+## 2026-06-11 Post-run Polish Pass
+
+- Implemented `docs/POST_RUN_POLISH_PLAN_2026-06-11.md` in order through B1-B3.
+- B1: DevTools and page-network USERNAMES payloads arriving after `window.__igFollowerRunInProgress` becomes false are now ignored before set mutation. READY/STATUS/DISCONNECTED and rate-limit status handling were left unchanged.
+- B2: `getListCompletionAssessment` now includes a bounded `domTierCandidates` list without changing the pure `assessListCompletion` contract. When the confirmed list-end gap equals the DOM-tier candidate count, the console prints a correlation line and records `gap_matches_dom_candidates`.
+- B2 also updates the old inactive/deleted wording to: counter includes accounts that the list API did not return, such as recent unfollow cache, restricted, or inactive accounts.
+- B3: dynamic Korean subject particles now use `withSubjectParticle`, fixing `팔로잉가` to `팔로잉이` while keeping `팔로워가`.
+- Static validation passed after each B item with `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node tools/walker-fixtures.mjs`, and `node tools/compare-fixtures.mjs`.
+- Manual Chrome validation was not rerun in this pass. Remaining B-specific checks: after a completed run, manually scroll the followers/following modal and confirm one ignore notice, unchanged `window.__igFollowerResult` lengths, no `[DevTools] ... +N` set-change log, and `window.__igFollowerPrintDevToolsStatus()` showing `postRunIgnoredPayloadCount > 0`.

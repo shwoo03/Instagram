@@ -109,3 +109,10 @@ Notes on prior 2026-06-07 open items:
 - Done: A6 removes duplicate content-bridge sync noise, avoids `약 0KB` storage logs, and clarifies unresolved-row diagnostics as possible button fragments.
 - Done: A7 extends compare fixtures and adds an e2e code variant for displayed count 38/32 with actual list 36/30. Browser e2e execution remains blocked by the existing local Puppeteer extension-injection issue and was not rerun after user concern about browser launches.
 - Open: run the manual Chrome checklist from `docs/LIST_END_ACCURACY_PLAN_2026-06-11.md` section 2 on the real Instagram profile. Expected shape: DevTools 285/285, final diff 0/0, status `completed_at_list_end`, trust gate `확정 비교 가능`.
+
+## 2026-06-11 Post-run Polish
+
+- Done: B1 gates DevTools/page-network USERNAMES payloads after run completion so saved results and live state do not diverge when the user scrolls manually after `8) 전체 저장 완료`.
+- Done: B2 adds DOM-tier candidate correlation diagnostics for confirmed list-end gaps and replaces the old inactive/deleted wording with the more precise "counter includes accounts the list API did not return" explanation.
+- Done: B3 fixes dynamic Korean subject particles so labels print as `팔로잉이` and `팔로워가` in reliability warnings.
+- Open: manually verify the post-run payload gate by scrolling the modal after completion and checking that the ignore notice prints once, result lengths stay unchanged, and `postRunIgnoredPayloadCount` increments.
