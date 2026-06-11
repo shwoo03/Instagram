@@ -1324,7 +1324,7 @@
 
         state.devtoolsBridge.listenerInstalledAt = new Date().toISOString();
         console.log("🧪 DevTools 브리지 listener 준비됨. 상태 확인: window.__igFollowerPrintDevToolsStatus?.()");
-        notifyContentBridgeReady();
+        // preflight가 동기화 담당
     }
 
     function notifyContentBridgeReady() {
@@ -1896,7 +1896,7 @@
         console.log("🔁 중복으로 보이는 계정:", diagnostic.duplicateUsernames.length ? diagnostic.duplicateUsernames.join(", ") : "없음");
 
         if (diagnostic.unresolvedRows.length > 0) {
-            console.log("⚠️ 프로필 링크를 해석하지 못한 행 후보:");
+            console.log("⚠️ 프로필 링크를 해석하지 못한 행 후보(버튼 조각 행 포함 가능):");
             diagnostic.unresolvedRows.forEach((text, index) => console.log(`   ${index + 1}. ${text}`));
         } else {
             console.log("✅ 현재 보이는 행 중 프로필 링크 해석 실패 후보는 없습니다.");
@@ -3478,7 +3478,10 @@
                     console.log("⚠️ 확장 세션 저장 실패:", response?.error || "unknown-error");
                     return;
                 }
-                console.log(`📦 확장 세션 저장 완료: ${response.key} (약 ${Math.round((response.approxBytes || 0) / 1024)}KB)`);
+                const sizeLabel = response.approxBytes > 0
+                    ? ` (약 ${Math.max(1, Math.round(response.approxBytes / 1024))}KB)`
+                    : "";
+                console.log(`📦 확장 세션 저장 완료: ${response.key}${sizeLabel}`);
                 if (Array.isArray(response.truncatedSections) && response.truncatedSections.length > 0) {
                     console.log(`⚠️ 세션 스냅샷이 저장 한도 때문에 일부 절단되었습니다: ${response.truncatedSections.join(", ")}`);
                     console.log("ℹ️ 페이지 메모리(window.__igFollowerResult)에는 전체 데이터가 보존되어 있습니다.");
