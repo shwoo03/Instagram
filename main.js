@@ -128,7 +128,9 @@
             lastStatusAt: null,
             lastPayloadAt: null,
             lastError: null,
-            lastStatus: null
+            lastStatus: null,
+            postRunIgnoredPayloadCount: 0,
+            postRunNoticeShown: false
         },
         pageNetworkBridge: {
             listenerInstalledAt: null,
@@ -144,7 +146,9 @@
             lastPayloadAt: null,
             lastStatusAt: null,
             lastError: null,
-            lastStatus: null
+            lastStatus: null,
+            postRunIgnoredPayloadCount: 0,
+            postRunNoticeShown: false
         },
         activeCollectionMode: "followers",
         accuracyPreflight: null,
@@ -886,6 +890,16 @@
                     : "";
             if (!/followers|following/.test(mode)) return;
 
+            if (window.__igFollowerRunInProgress !== true) {
+                state.pageNetworkBridge.postRunIgnoredPayloadCount++;
+                state.pageNetworkBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
+                if (!state.pageNetworkBridge.postRunNoticeShown) {
+                    state.pageNetworkBridge.postRunNoticeShown = true;
+                    console.log("ℹ️ 실행 종료 후 도착한 page network payload는 저장된 결과 보호를 위해 반영하지 않습니다. 새 수집이 필요하면 확장 아이콘을 다시 클릭하세요.");
+                }
+                return;
+            }
+
             const isCandidate = message.mode === "active";
             const source = `${message.transport || "page-network"}${isCandidate ? "-candidate" : ""}`;
             const beforeConfirmed = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
@@ -1267,6 +1281,17 @@
             if (!mode || !Array.isArray(message.usernames)) {
                 state.devtoolsBridge.lastError = "invalid-devtools-payload";
                 sendResponse?.({ ok: false, error: "invalid-devtools-payload" });
+                return false;
+            }
+
+            if (window.__igFollowerRunInProgress !== true) {
+                state.devtoolsBridge.postRunIgnoredPayloadCount++;
+                state.devtoolsBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
+                if (!state.devtoolsBridge.postRunNoticeShown) {
+                    state.devtoolsBridge.postRunNoticeShown = true;
+                    console.log("ℹ️ 실행 종료 후 도착한 DevTools payload는 저장된 결과 보호를 위해 반영하지 않습니다. 새 수집이 필요하면 확장 아이콘을 다시 클릭하세요.");
+                }
+                sendResponse?.({ ok: true, ignored: "run-not-active" });
                 return false;
             }
 
@@ -3770,11 +3795,15 @@
         state.devtoolsBridge.candidatePayloadCount = 0;
         state.devtoolsBridge.addedCount = 0;
         state.devtoolsBridge.lastPayloadAt = null;
+        state.devtoolsBridge.postRunIgnoredPayloadCount = 0;
+        state.devtoolsBridge.postRunNoticeShown = false;
         state.pageNetworkBridge.payloadCount = 0;
         state.pageNetworkBridge.confirmedPayloadCount = 0;
         state.pageNetworkBridge.candidatePayloadCount = 0;
         state.pageNetworkBridge.addedCount = 0;
         state.pageNetworkBridge.lastPayloadAt = null;
+        state.pageNetworkBridge.postRunIgnoredPayloadCount = 0;
+        state.pageNetworkBridge.postRunNoticeShown = false;
         state.pageNetworkBridge.autoEnabled = false;
         state.pageNetworkBridge.enableRequestedAt = null;
         state.rateLimit = {
