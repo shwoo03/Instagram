@@ -799,6 +799,33 @@
         };
     }
 
+    function addDisplayedCountCompletionWarningsToDiffs(diffs, summary = {}) {
+        if (!diffs) return diffs;
+        const warnings = [];
+        const pairs = [
+            ["followers", "팔로워", summary.followersCompletion],
+            ["following", "팔로잉", summary.followingCompletion]
+        ];
+        for (const [, label, completion] of pairs) {
+            if (!completion?.completeAtListEnd || completion.gap <= 0) continue;
+            warnings.push({
+                code: "displayed_count_includes_inactive",
+                severity: "info",
+                message: `${label} 화면 표시 수가 목록 끝 확정 수집 수보다 ${completion.gap}명 많습니다. 비활성화/탈퇴 계정이 카운터에 포함된 경우로 추정되며 diff 신뢰도에는 영향이 없습니다.`,
+                affectedFields: []
+            });
+        }
+        if (warnings.length === 0) return diffs;
+        return {
+            ...diffs,
+            warnings: [...(Array.isArray(diffs.warnings) ? diffs.warnings : []), ...warnings]
+        };
+    }
+
+    function addCompareWarningsToDiffs(diffs, summary = {}) {
+        return addDisplayedCountCompletionWarningsToDiffs(addAccuracyWarningsToDiffs(diffs, summary), summary);
+    }
+
     function getPageNetworkBridgeSnapshot() {
         return {
             ...state.pageNetworkBridge,
@@ -3727,10 +3754,20 @@
         const followersTarget = state.expectedCounts.followers || 0;
         console.log(`🎯 팔로워 목표 기준: 화면 표시 ${state.expectedCounts.followers || "없음"}명, 실제 목표 ${followersTarget > 0 ? `${followersTarget}명` : "전체(정체 시 종료)"}`);
         let followers = await scrollUntilEnd(followersTarget, state.collectedUsers, "followers", { saveScrollBoxForFollow: true });
+        let followersCompletion = null;
         if (followersTarget > 0 && followers.length < followersTarget) {
-            summary.followersReverify = await reverifyCurrentListCollection(followersTarget, state.collectedUsers, "followers");
-            promoteDomCandidatesToConfirmed("followers", state.collectedUsers, followersTarget, "followers-reverify-shortfall");
-            followers = Array.from(state.collectedUsers);
+            followersCompletion = getListCompletionAssessment("followers", followersTarget);
+            if (followersCompletion.completeAtListEnd) {
+                summary.followersCompletion = followersCompletion;
+                summary.followersCollectionStatus = "complete_at_list_end";
+                recordRunEvent("list_end_confirmed_below_displayed", { mode: "followers", ...followersCompletion });
+                console.log(`📋 팔로워 목록 끝 도달 확인: 화면 표시 ${followersTarget}명 중 ${followers.length}명 수집. 차이 ${followersCompletion.gap}명은 표시 수에 비활성화/탈퇴 계정이 포함된 경우일 가능성이 높습니다.`);
+                console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
+            } else {
+                summary.followersReverify = await reverifyCurrentListCollection(followersTarget, state.collectedUsers, "followers");
+                promoteDomCandidatesToConfirmed("followers", state.collectedUsers, followersTarget, "followers-reverify-shortfall");
+                followers = Array.from(state.collectedUsers);
+            }
         }
         if (finalizeIfProfileChanged(summary)) return;
         summary.followersCount = followers.length;
@@ -3739,7 +3776,7 @@
         summary.followersScrollDiagnostics = state.lastFollowersScrollDiagnostics.slice(-20);
         summary.followersScrollRecovery = state.scrollRecovery.followers.slice(-20);
 
-        if (followersTarget > 0 && followers.length < followersTarget) {
+        if (followersTarget > 0 && followers.length < followersTarget && !followersCompletion?.completeAtListEnd) {
             summary.status = "collection_incomplete";
             summary.followersCollectionStatus = "incomplete";
             summary.lastError = `팔로워 수집이 목표 ${followersTarget}명보다 낮은 ${followers.length}명에서 종료되었습니다. 팔로우 단계는 실행하지 않습니다.`;
@@ -3753,7 +3790,9 @@
             printSummary(summary);
             return;
         }
-        summary.followersCollectionStatus = followersTarget > 0 && followers.length > followersTarget ? "overcount" : "complete";
+        if (!summary.followersCollectionStatus) {
+            summary.followersCollectionStatus = followersTarget > 0 && followers.length > followersTarget ? "overcount" : "complete";
+        }
 
         if (FOLLOW_ACTION_ENABLED) {
             console.log("4) 팔로우 처리 시작...");
@@ -3817,10 +3856,20 @@
         console.log("7) 팔로잉 목록 수집 시작...");
         const followingTarget = state.expectedCounts.following || 0;
         let following = await scrollUntilEnd(followingTarget, state.followingUsers, "following");
+        let followingCompletion = null;
         if (followingTarget > 0 && following.length < followingTarget) {
-            summary.followingReverify = await reverifyCurrentListCollection(followingTarget, state.followingUsers, "following");
-            promoteDomCandidatesToConfirmed("following", state.followingUsers, followingTarget, "following-reverify-shortfall");
-            following = Array.from(state.followingUsers);
+            followingCompletion = getListCompletionAssessment("following", followingTarget);
+            if (followingCompletion.completeAtListEnd) {
+                summary.followingCompletion = followingCompletion;
+                summary.followingCollectionStatus = "complete_at_list_end";
+                recordRunEvent("list_end_confirmed_below_displayed", { mode: "following", ...followingCompletion });
+                console.log(`📋 팔로잉 목록 끝 도달 확인: 화면 표시 ${followingTarget}명 중 ${following.length}명 수집. 차이 ${followingCompletion.gap}명은 표시 수에 비활성화/탈퇴 계정이 포함된 경우일 가능성이 높습니다.`);
+                console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
+            } else {
+                summary.followingReverify = await reverifyCurrentListCollection(followingTarget, state.followingUsers, "following");
+                promoteDomCandidatesToConfirmed("following", state.followingUsers, followingTarget, "following-reverify-shortfall");
+                following = Array.from(state.followingUsers);
+            }
         }
         if (finalizeIfProfileChanged(summary)) return;
         summary.followingCount = following.length;
@@ -3828,7 +3877,7 @@
         summary.followingScrollEndReason = state.lastFollowingScrollEndReason;
         summary.followingScrollDiagnostics = state.lastFollowingScrollDiagnostics.slice(-20);
         summary.followingScrollRecovery = state.scrollRecovery.following.slice(-20);
-        if (followingTarget > 0 && following.length < followingTarget) {
+        if (followingTarget > 0 && following.length < followingTarget && !followingCompletion?.completeAtListEnd) {
             summary.followingCollectionStatus = "count_mismatch";
             summary.status = "completed_with_count_mismatch";
             summary.lastError = `팔로잉 목록이 ${followingTarget}명 중 ${following.length}명만 수집되어 맞팔 비교 결과에 오탐이 포함될 수 있습니다.`;
@@ -3847,7 +3896,7 @@
                     }
                 ]
             };
-            summary.diffs = addAccuracyWarningsToDiffs(summary.diffs, summary);
+            summary.diffs = addCompareWarningsToDiffs(summary.diffs, summary);
             summary.accuracyMode = getAccuracyMode(summary);
             summary.followingMismatchDiagnostic = captureAndPrintCollectionDiagnostic(state.followingUsers, followingTarget, "following");
             console.log("⚠️ 팔로잉 수집 수량 불일치:", summary.lastError);
@@ -3857,19 +3906,22 @@
             printSummary(summary);
             console.log("8) 팔로잉 수집이 불완전하지만 partial diff 저장 완료");
             return;
-        } else {
+        } else if (!summary.followingCollectionStatus) {
             summary.followingCollectionStatus = "complete";
         }
 
-        const diffs = addAccuracyWarningsToDiffs(compareFollowSets(), summary);
+        const diffs = addCompareWarningsToDiffs(compareFollowSets(), summary);
         summary.diffs = diffs;
         summary.accuracyMode = getAccuracyMode(summary);
         const excludedFromCompareCount = (diffs.excludedFromCompare?.followersOvercountLowConfidence?.length || 0) +
             (diffs.excludedFromCompare?.followingOvercountLowConfidence?.length || 0);
+        const hasListEndCompletion = Boolean(summary.followersCompletion?.completeAtListEnd || summary.followingCompletion?.completeAtListEnd);
         if (summary.accuracyMode.status === "DOM_PREVIEW") {
             summary.status = excludedFromCompareCount > 0 ? "completed_dom_preview_with_overcount_exclusions" : "completed_dom_preview";
         } else if (excludedFromCompareCount > 0) {
             summary.status = "completed_with_overcount_exclusions";
+        } else if (hasListEndCompletion) {
+            summary.status = "completed_at_list_end";
         } else if (summary.status !== "completed_with_count_mismatch") {
             summary.status = "completed";
         }
