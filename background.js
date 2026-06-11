@@ -1,6 +1,16 @@
+const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
+
 function getValidTabId(value) {
   const tabId = Number(value);
   return Number.isInteger(tabId) && tabId >= 0 ? tabId : null;
+}
+
+function measureApproxBytes(value) {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
 }
 
 function getSafeSourceLabel(payload) {
@@ -125,6 +135,78 @@ function getSafeRunSnapshot(payload) {
   };
 }
 
+function buildMinimalSnapshot(snapshot) {
+  return {
+    profile: snapshot.profile,
+    runId: snapshot.runId,
+    collectedAt: snapshot.collectedAt,
+    source: snapshot.source,
+    followers: (snapshot.followers || []).slice(0, 5000),
+    following: (snapshot.following || []).slice(0, 5000),
+    expectedCounts: snapshot.expectedCounts || null,
+    summaryStatus: snapshot.debugReport?.summaryStatus || null
+  };
+}
+
+function applySnapshotBudget(snapshot, budgetBytes = SNAPSHOT_BUDGET_BYTES) {
+  const truncatedSections = [];
+  let approxBytes = measureApproxBytes(snapshot);
+
+  const stages = [
+    ["provenance", (s) => { s.provenance = { followers: null, following: null }; }],
+    ["candidates", (s) => {
+      if (s.snapshots?.followers) s.snapshots.followers.candidates = (s.snapshots.followers.candidates || []).slice(0, 200);
+      if (s.snapshots?.following) s.snapshots.following.candidates = (s.snapshots.following.candidates || []).slice(0, 200);
+      if (s.candidates?.followers) s.candidates.followers = s.candidates.followers.slice(0, 200);
+      if (s.candidates?.following) s.candidates.following = s.candidates.following.slice(0, 200);
+      if (s.debugReport?.excludedFromDiff) {
+        s.debugReport.excludedFromDiff.followersCandidates = (s.debugReport.excludedFromDiff.followersCandidates || []).slice(0, 200);
+        s.debugReport.excludedFromDiff.followingCandidates = (s.debugReport.excludedFromDiff.followingCandidates || []).slice(0, 200);
+      }
+    }],
+    ["diagnostics", (s) => {
+      s.collectionDiagnostics = null;
+      if (s.scroll) {
+        s.scroll.followersDiagnostics = (s.scroll.followersDiagnostics || []).slice(-5);
+        s.scroll.followingDiagnostics = (s.scroll.followingDiagnostics || []).slice(-5);
+      }
+      if (s.debugReport?.sources?.dom) s.debugReport.sources.dom.collectionDiagnostics = null;
+    }]
+  ];
+
+  for (const [name, apply] of stages) {
+    if (approxBytes <= budgetBytes) break;
+    apply(snapshot);
+    truncatedSections.push(name);
+    approxBytes = measureApproxBytes(snapshot);
+  }
+
+  if (approxBytes > budgetBytes) {
+    truncatedSections.push("minimal");
+    const minimal = buildMinimalSnapshot(snapshot);
+    return { snapshot: minimal, truncatedSections, approxBytes: measureApproxBytes(minimal) };
+  }
+
+  return { snapshot, truncatedSections, approxBytes };
+}
+
+function buildLastRunRef(key, snapshot, approxBytes) {
+  return {
+    ref: key,
+    profile: snapshot.profile,
+    runId: snapshot.runId,
+    collectedAt: snapshot.collectedAt,
+    approxBytes
+  };
+}
+
+function buildSnapshotStoragePatch(key, snapshot, approxBytes) {
+  return {
+    [key]: snapshot,
+    "ig_follower_snapshot:lastRun": buildLastRunRef(key, snapshot, approxBytes)
+  };
+}
+
 const devtoolsTabs = new Map();
 const DEVTOOLS_STATE_TTL_MS = 15000;
 
@@ -233,13 +315,34 @@ function storeRunSnapshot(message, sendResponse) {
   }
 
   const key = message.storageKey || `ig_follower_snapshot:${snapshot.profile}`;
-  chrome.storage.session.set({
-    [key]: snapshot,
-    "ig_follower_snapshot:lastRun": snapshot
-  }).then(() => {
-    sendResponse({ ok: true, key });
+  const budgeted = applySnapshotBudget(snapshot);
+  const storageInfo = {
+    approxBytes: budgeted.approxBytes,
+    truncatedSections: budgeted.truncatedSections,
+    budgetBytes: SNAPSHOT_BUDGET_BYTES
+  };
+  budgeted.snapshot.storage = storageInfo;
+
+  chrome.storage.session.set(buildSnapshotStoragePatch(key, budgeted.snapshot, budgeted.approxBytes)).then(() => {
+    sendResponse({ ok: true, key, approxBytes: budgeted.approxBytes, truncatedSections: budgeted.truncatedSections });
   }).catch((error) => {
-    sendResponse({ ok: false, error: error?.message || "storage-session-set-failed" });
+    const message = error?.message || "";
+    if (/quota/i.test(message) && !budgeted.truncatedSections.includes("minimal")) {
+      const minimal = buildMinimalSnapshot(budgeted.snapshot);
+      const approxBytes = measureApproxBytes(minimal);
+      minimal.storage = {
+        approxBytes,
+        truncatedSections: [...budgeted.truncatedSections, "minimal-after-quota-error"],
+        budgetBytes: SNAPSHOT_BUDGET_BYTES
+      };
+      chrome.storage.session.set(buildSnapshotStoragePatch(key, minimal, approxBytes)).then(() => {
+        sendResponse({ ok: true, key, approxBytes, truncatedSections: minimal.storage.truncatedSections });
+      }).catch((retryError) => {
+        sendResponse({ ok: false, error: retryError?.message || "storage-session-set-failed" });
+      });
+      return;
+    }
+    sendResponse({ ok: false, error: message || "storage-session-set-failed" });
   });
 }
 

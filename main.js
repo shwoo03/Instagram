@@ -3350,7 +3350,11 @@
                     console.log("⚠️ 확장 세션 저장 실패:", response?.error || "unknown-error");
                     return;
                 }
-                console.log("📦 확장 세션 저장 완료:", response.key);
+                console.log(`📦 확장 세션 저장 완료: ${response.key} (약 ${Math.round((response.approxBytes || 0) / 1024)}KB)`);
+                if (Array.isArray(response.truncatedSections) && response.truncatedSections.length > 0) {
+                    console.log(`⚠️ 세션 스냅샷이 저장 한도 때문에 일부 절단되었습니다: ${response.truncatedSections.join(", ")}`);
+                    console.log("ℹ️ 페이지 메모리(window.__igFollowerResult)에는 전체 데이터가 보존되어 있습니다.");
+                }
             });
         } catch (e) {
             console.log("⚠️ 확장 세션 저장 중 예외:", e?.message || e);
