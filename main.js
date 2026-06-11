@@ -2967,6 +2967,10 @@
         const excludedFollowing = getOvercountLowConfidenceExclusions("following", rawFollowing, rawFollowers, state.expectedCounts.following || 0);
         const followers = new Set(Array.from(rawFollowers).filter((u) => !excludedFollowers.has(u)));
         const following = new Set(Array.from(rawFollowing).filter((u) => !excludedFollowing.has(u)));
+        const fallbackOnlyFollowers = getFallbackOnlyDiffExclusions(followers, following, state.userProvenance.followers);
+        const fallbackOnlyFollowing = getFallbackOnlyDiffExclusions(following, followers, state.userProvenance.following);
+        fallbackOnlyFollowers.forEach((username) => followers.delete(username));
+        fallbackOnlyFollowing.forEach((username) => following.delete(username));
 
         const onlyFollowers = Array.from(followers).filter((u) => !following.has(u)).sort();
         const onlyFollowing = Array.from(following).filter((u) => !followers.has(u)).sort();
@@ -2979,7 +2983,11 @@
             mutualSample: mutualUsers.slice(0, 20),
             excludedFromCompare: {
                 followersOvercountLowConfidence: Array.from(excludedFollowers).sort(),
-                followingOvercountLowConfidence: Array.from(excludedFollowing).sort()
+                followingOvercountLowConfidence: Array.from(excludedFollowing).sort(),
+                fallbackOnlyDiffMembers: {
+                    followers: Array.from(fallbackOnlyFollowers).sort(),
+                    following: Array.from(fallbackOnlyFollowing).sort()
+                }
             },
             rawCounts: {
                 followers: rawFollowers.size,
@@ -3017,6 +3025,21 @@
             });
 
         return new Set(candidates.slice(0, overcount));
+    }
+
+    // [ig-compare:fallback-only] tools/compare-fixtures.mjs가 추출해 검증. bucket은 주입 가능해야 한다.
+    function getFallbackOnlyDiffExclusions(sourceSet, oppositeSet, bucket) {
+        const excluded = new Set();
+        for (const username of sourceSet) {
+            if (oppositeSet.has(username)) continue;
+            const sources = Array.from(bucket?.get(username)?.sources || []);
+            if (sources.length === 0) continue;
+            const fallbackOnly = sources.every((source) =>
+                DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source) || source === "dom-fallback"
+            );
+            if (fallbackOnly && sources.includes("dom-fallback")) excluded.add(username);
+        }
+        return excluded;
     }
 
     function getCompareIntegrity(diffs, followersCount, followingCount) {
@@ -3250,6 +3273,11 @@
         if (excludedFollowers.length > 0 || excludedFollowing.length > 0) {
             console.log(`⚠️ 화면 표시 수 초과로 final diff에서 제외한 DOM-only 계정: 팔로워 ${excludedFollowers.length}명 / 팔로잉 ${excludedFollowing.length}명`);
         }
+        const fallbackOnlyFollowers = diffs.excludedFromCompare?.fallbackOnlyDiffMembers?.followers || [];
+        const fallbackOnlyFollowing = diffs.excludedFromCompare?.fallbackOnlyDiffMembers?.following || [];
+        if (fallbackOnlyFollowers.length > 0 || fallbackOnlyFollowing.length > 0) {
+            console.log(`⚠️ dom-fallback 승격 단독 근거로 final diff에서 제외한 계정: 팔로워 ${fallbackOnlyFollowers.length}명 / 팔로잉 ${fallbackOnlyFollowing.length}명`);
+        }
 
         console.log("수집 근거:");
         console.log(`- DevTools: ${devtools.label}`);
@@ -3281,6 +3309,17 @@
             }
             if (excludedFollowing.length > 0) {
                 printAccountList("팔로잉 초과 제외 계정", excludedFollowing, "following");
+            }
+        }
+        const fallbackOnlyFollowers = diffs.excludedFromCompare?.fallbackOnlyDiffMembers?.followers || [];
+        const fallbackOnlyFollowing = diffs.excludedFromCompare?.fallbackOnlyDiffMembers?.following || [];
+        if (fallbackOnlyFollowers.length > 0 || fallbackOnlyFollowing.length > 0) {
+            console.log("⚠️ dom-fallback 승격 단독 근거 계정은 허위 diff 방지를 위해 final diff에서 제외했습니다. 검증하려면 __igFollowerExplainUser(\"username\") 를 사용하세요.");
+            if (fallbackOnlyFollowers.length > 0) {
+                printAccountList("팔로워 dom-fallback 단독 제외 계정", fallbackOnlyFollowers, "followers");
+            }
+            if (fallbackOnlyFollowing.length > 0) {
+                printAccountList("팔로잉 dom-fallback 단독 제외 계정", fallbackOnlyFollowing, "following");
             }
         }
         if (diffs.reliability === "partial") {

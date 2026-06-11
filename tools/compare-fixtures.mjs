@@ -121,6 +121,14 @@ const getOvercountLowConfidenceExclusions = new Function(
   `
 )({ userProvenance: { followers: new Map(), following: new Map() } }, compareCandidateEvidence);
 
+const getFallbackOnlyDiffExclusionsSource = loadWalkerFrom('main.js', 'getFallbackOnlyDiffExclusions');
+const getFallbackOnlyDiffExclusions = new Function(`
+  const DOM_TIER_SOURCES = new Set(["DOM", "dom-observer"]);
+  const DOM_CANDIDATE_SOURCES = new Set(["dom-candidate", "dom-observer-candidate"]);
+  ${getFallbackOnlyDiffExclusionsSource}
+  return getFallbackOnlyDiffExclusions;
+`)();
+
 const bucket = new Map([
   ['net_a', sourceInfo({ seenCount: 1, sources: ['DevTools'] })],
   ['net_b', sourceInfo({ seenCount: 1, sources: ['DevTools'] })],
@@ -163,5 +171,31 @@ const observerTierExclusions = getOvercountLowConfidenceExclusions(
   observerTierBucket
 );
 assert.deepEqual([...observerTierExclusions], ['observer_only']);
+
+const fallbackOnlyBucket = new Map([
+  ['fallback_diff', sourceInfo({ sources: ['dom-candidate', 'dom-fallback'] })],
+  ['network_diff', sourceInfo({ sources: ['DevTools', 'dom-fallback'] })],
+  ['fallback_mutual', sourceInfo({ sources: ['dom-candidate', 'dom-fallback'] })]
+]);
+const fallbackOnlyExclusions = getFallbackOnlyDiffExclusions(
+  new Set(['fallback_diff', 'network_diff', 'fallback_mutual']),
+  new Set(['fallback_mutual']),
+  fallbackOnlyBucket
+);
+assert.deepEqual([...fallbackOnlyExclusions], ['fallback_diff']);
+
+const networkFallbackExclusions = getFallbackOnlyDiffExclusions(
+  new Set(['network_diff']),
+  new Set(),
+  fallbackOnlyBucket
+);
+assert.deepEqual([...networkFallbackExclusions], []);
+
+const mutualFallbackExclusions = getFallbackOnlyDiffExclusions(
+  new Set(['fallback_mutual']),
+  new Set(['fallback_mutual']),
+  fallbackOnlyBucket
+);
+assert.deepEqual([...mutualFallbackExclusions], []);
 
 console.log('compare fixtures passed');
