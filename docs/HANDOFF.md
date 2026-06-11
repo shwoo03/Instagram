@@ -153,3 +153,27 @@ Remaining platform checks:
 2. After a real run, verify `chrome.storage.session.get("ig_follower_snapshot:lastRun")` returns a `{ ref }` record and the referenced profile snapshot exists.
 3. Re-run `npm run e2e` in an environment where Puppeteer extension script injection into `127.0.0.1` fixture pages succeeds; scenarios A-D should pass, E may pass or skip.
 4. Manual Chrome standard flow remains required for real Instagram DOM/network behavior.
+
+## 2026-06-11 List-end Accuracy Pass
+
+- Implemented `docs/LIST_END_ACCURACY_PLAN_2026-06-11.md` in order through A1-A7.
+- Analysis conclusion for the latest real profile run: the true comparable shape is 285 followers / 285 following. The displayed 287/287 header is now treated as likely including inactive/deleted accounts when DevTools/page-network evidence and DOM list-end evidence agree that the list is exhausted.
+- The previous 287/287 pass-shape note is stale for this account's current state. The expected post-fix pass shape is DevTools 285/285, final diff 0/0, status `completed_at_list_end`, trust gate `확정 비교 가능`, with `haeunieii` and `won_donghwi` remaining candidate diagnostics only, not final diff members.
+- Runtime behavior changed conservatively: bounded DOM fallback still exists for ordinary shortfall cases, but it is skipped when a small displayed-count gap is explained by confirmed list end. `dom-fallback`-only one-sided diff members are excluded from final diff to prevent false positives.
+- Expected operator-visible improvement: reverify and DOM promotion logs should not appear in this list-end confirmed case, and scroll should stop after roughly 6 stable ticks once the visible end is confirmed, reducing runtime.
+- Static validation passed after each A item with `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node tools/walker-fixtures.mjs`, and `node tools/compare-fixtures.mjs`.
+- `tools/compare-fixtures.mjs` now covers the A1 list-completion cases and A3 fallback-only diff exclusions using synthetic data only.
+- Added e2e code for a displayed-count gap variant: fixture displays 38/32 while actual lists remain 36/30; the runner injects synthetic DevTools usernames through the existing extension message bridge and expects `completed_at_list_end`.
+- `npm run e2e` was not rerun in this pass. The local harness was already blocked by Chrome/Puppeteer extension injection (`Frame with ID 0 was removed`), and the user specifically questioned further browser launches for a Chrome extension task. Re-run it only after confirming the harness environment, not as an automatic browser launch.
+
+Remaining list-end accuracy manual checklist:
+
+1. Reload the unpacked extension from `chrome://extensions`.
+2. Reload the Instagram profile tab and open Chrome DevTools.
+3. Click the extension action to inject `main.js`.
+4. Confirm DevTools bridge status reaches the page console without duplicate ready-sync noise.
+5. Run the baseline profile and confirm followers/following both collect 285, final diff is 0/0, status is `completed_at_list_end`, and the decision card says `확정 비교 가능`.
+6. Confirm the console explains the displayed-count gap as likely inactive/deleted accounts and no `누락 재검증` or DOM promotion log appears.
+7. Confirm `haeunieii` and `won_donghwi` are absent from final diff and only visible through candidate/provenance diagnostics if present.
+8. Run a DevTools-closed `DOM_PREVIEW` check and confirm the existing partial/fallback behavior is unchanged.
+9. Confirm `chrome://extensions` has no new warn/error panel noise for expected degraded states.

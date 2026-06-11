@@ -88,6 +88,7 @@ Manual browser check:
 - Once DevTools or page-network confirmed payload exists for a list, new DOM-only usernames must not be promoted directly into the confirmed compare set.
 - DOM-only usernames after network confirmation should stay as `dom-candidate` unless confirmed collection is short of the expected UI count.
 - If confirmed collection is short, promote DOM candidates only as a bounded fallback up to the missing expected-count gap, and label the source as fallback evidence.
+- If list end is confirmed (network pages exhausted + DOM stalled at the visible end) and the gap to the displayed count is small, do not promote DOM candidates. Treat the displayed count as likely including inactive accounts.
 - Do not reset a list set after network payloads may already have populated it. Late resets can erase valid DevTools evidence.
 - Keep page-network auto-assist off by default unless explicitly re-enabled and validated; unexpected `console.warn` output can create extension error-panel noise.
 - Do not use `console.warn` for expected degraded states such as DevTools not yet connected. Use Korean `console.log` diagnostics and reserve warnings/errors for real failures.

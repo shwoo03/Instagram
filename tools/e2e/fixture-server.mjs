@@ -10,7 +10,9 @@ export const EXPECTED = {
   followingOnly: 6
 };
 
-function pageHtml() {
+function pageHtml({ displayedCountGap = 0 } = {}) {
+  const displayedFollowers = FOLLOWERS.length + displayedCountGap;
+  const displayedFollowing = FOLLOWING.length + displayedCountGap;
   return `<!doctype html>
 <html lang="ko">
 <head>
@@ -31,8 +33,8 @@ function pageHtml() {
   <main>
     <h1>fixtureprofile</h1>
     <header>
-      <a href="/fixtureprofile/followers/" data-list="followers">팔로워 ${FOLLOWERS.length}</a>
-      <a href="/fixtureprofile/following/" data-list="following">팔로잉 ${FOLLOWING.length}</a>
+      <a href="/fixtureprofile/followers/" data-list="followers">팔로워 ${displayedFollowers}</a>
+      <a href="/fixtureprofile/following/" data-list="following">팔로잉 ${displayedFollowing}</a>
     </header>
   </main>
   <script>
@@ -91,7 +93,8 @@ function pageHtml() {
 
 export async function startFixtureServer() {
   const server = http.createServer((req, res) => {
-    if (req.url === '/favicon.ico') {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    if (url.pathname === '/favicon.ico') {
       res.writeHead(204);
       res.end();
       return;
@@ -100,7 +103,9 @@ export async function startFixtureServer() {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store'
     });
-    res.end(pageHtml());
+    res.end(pageHtml({
+      displayedCountGap: Number(url.searchParams.get('display_gap') || 0)
+    }));
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

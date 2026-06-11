@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer';
 import { buildTestExtension } from './build-test-extension.mjs';
-import { EXPECTED, startFixtureServer } from './fixture-server.mjs';
+import { EXPECTED, FOLLOWERS, FOLLOWING, startFixtureServer } from './fixture-server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -35,11 +35,11 @@ async function getWorker(browser) {
   return worker;
 }
 
-async function openFixturePage(browser, origin) {
+async function openFixturePage(browser, origin, search = '') {
   const page = await browser.newPage();
   const logs = [];
   page.on('console', (msg) => logs.push(msg.text()));
-  await page.goto(`${origin}/fixtureprofile/`, { waitUntil: 'networkidle0' });
+  await page.goto(`${origin}/fixtureprofile/${search}`, { waitUntil: 'networkidle0' });
   await page.bringToFront();
   return { page, logs };
 }
@@ -58,6 +58,20 @@ async function inject(browser, tabId) {
   const worker = await getWorker(browser);
   // This calls the same injection helper used by the action click path; the e2e runner only bypasses the Instagram URL gate.
   await worker.evaluate((id) => injectInstagramCollector(id), tabId);
+}
+
+async function sendDevtoolsUsernames(browser, tabId, mode, usernames) {
+  const worker = await getWorker(browser);
+  await worker.evaluate(async ({ id, modeName, users }) => {
+    await chrome.tabs.sendMessage(id, {
+      type: 'IG_DEVTOOLS_USERNAMES',
+      source: 'devtools-network',
+      schemaVersion: 1,
+      mode: modeName,
+      usernames: users,
+      capturedAt: new Date().toISOString()
+    });
+  }, { id: tabId, modeName: mode, users: usernames });
 }
 
 async function waitForResult(page, timeout = 120000) {
@@ -140,6 +154,29 @@ async function scenarioRateLimit(browser, origin) {
   await page.close();
 }
 
+async function scenarioDisplayedCountIncludesInactive(browser, origin) {
+  const { page, logs } = await openFixturePage(browser, origin, '?display_gap=2');
+  const tabId = await getFixtureTabId(browser);
+  await inject(browser, tabId);
+  await page.waitForFunction(() => window.__igFollowerPrintDevToolsStatus, { timeout: 20000 });
+  await sendDevtoolsUsernames(browser, tabId, 'followers', FOLLOWERS);
+  await sendDevtoolsUsernames(browser, tabId, 'following', FOLLOWING);
+  const result = await waitForResult(page);
+  assert.equal(result.status, 'completed_at_list_end');
+  assert.equal(result.followers.length, EXPECTED.followers);
+  assert.equal(result.following.length, EXPECTED.following);
+  assert.equal(result.diffs.mutualCount, EXPECTED.mutual);
+  assert.equal(result.diffs.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
+  assert.equal(result.diffs.iFollowButNotReturned.length, EXPECTED.followingOnly);
+  assert.equal(result.diffs.integrity.ok, true);
+  assert.equal(result.followersCompletion?.completeAtListEnd, true);
+  assert.equal(result.followingCompletion?.completeAtListEnd, true);
+  assert(logs.some((line) => line.includes('확정 비교 가능')), 'missing confirmed trust gate log');
+  assert(!logs.some((line) => line.includes('누락 재검증')), 'unexpected reverify log');
+  assert(!logs.some((line) => line.includes('부족분 보정으로 승격')), 'unexpected DOM promotion log');
+  await page.close();
+}
+
 async function scenarioStorageRef(browser, origin) {
   const { page } = await openFixturePage(browser, origin);
   const tabId = await getFixtureTabId(browser);
@@ -165,6 +202,7 @@ async function main() {
     ['B double injection', () => scenarioDoubleInject(browser, fixture.origin)],
     ['C forced modal close', () => scenarioModalClosed(browser, fixture.origin)],
     ['D synthetic 429 signal', () => scenarioRateLimit(browser, fixture.origin)],
+    ['F displayed count includes inactive', () => scenarioDisplayedCountIncludesInactive(browser, fixture.origin)],
     ['E storage lastRun ref', () => scenarioStorageRef(browser, fixture.origin)]
   ];
 

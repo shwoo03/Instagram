@@ -98,3 +98,14 @@ Notes on prior 2026-06-07 open items:
 - Done: M1 adds `minimum_chrome_version: "114"` without changing deployment permissions.
 - Partial: R8 adds the Puppeteer e2e harness, fixture server, test extension builder, `package.json`, and lockfile. `npm install` succeeded only with `PUPPETEER_SKIP_DOWNLOAD=1` using local Chrome; `npm run e2e` currently fails in this environment during extension script injection with `Frame with ID 0 was removed`.
 - Open: rerun `npm run e2e` in a Chrome/Puppeteer environment where extension `chrome.scripting.executeScript` against the local fixture tab completes. Scenarios A-D should pass; E may pass or skip.
+
+## 2026-06-11 List-end Accuracy
+
+- Done: A1 adds `assessListCompletion` and `getListCompletionAssessment` so a small displayed-count gap can be treated as inactive/deleted-account count only when list end and network evidence are confirmed.
+- Done: A2 gates reverify and bounded DOM fallback promotion on confirmed list end, preserving the fallback for ordinary `stalled` shortfalls.
+- Done: A3 excludes `dom-fallback`-only one-sided diff members from final diff while leaving mutual members and DevTools-backed members intact.
+- Done: A4 labels confirmed small-gap list-end runs as `COMPLETE_AT_LIST_END` and allows the trust gate to report `확정 비교 가능`.
+- Done: A5 exits scroll collection after 6 stable ticks when the visible list end is confirmed and the count gap is within tolerance.
+- Done: A6 removes duplicate content-bridge sync noise, avoids `약 0KB` storage logs, and clarifies unresolved-row diagnostics as possible button fragments.
+- Done: A7 extends compare fixtures and adds an e2e code variant for displayed count 38/32 with actual list 36/30. Browser e2e execution remains blocked by the existing local Puppeteer extension-injection issue and was not rerun after user concern about browser launches.
+- Open: run the manual Chrome checklist from `docs/LIST_END_ACCURACY_PLAN_2026-06-11.md` section 2 on the real Instagram profile. Expected shape: DevTools 285/285, final diff 0/0, status `completed_at_list_end`, trust gate `확정 비교 가능`.
