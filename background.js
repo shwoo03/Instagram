@@ -209,6 +209,35 @@ function buildSnapshotStoragePatch(key, snapshot, approxBytes) {
 
 const devtoolsTabs = new Map();
 const DEVTOOLS_STATE_TTL_MS = 15000;
+const DEVTOOLS_TABS_STORAGE_KEY = "ig_devtools_tabs_state:v1";
+
+const devtoolsTabsHydration = (async () => {
+  try {
+    if (!chrome.storage?.session) return;
+    const stored = await chrome.storage.session.get(DEVTOOLS_TABS_STORAGE_KEY);
+    const entries = stored?.[DEVTOOLS_TABS_STORAGE_KEY] || {};
+    for (const [key, value] of Object.entries(entries)) {
+      const tabId = getValidTabId(key);
+      if (tabId === null || devtoolsTabs.has(tabId)) continue;
+      devtoolsTabs.set(tabId, value);
+    }
+  } catch (error) {
+    console.log("[IG Comparator] devtools state hydration failed:", error?.message || error);
+  }
+})();
+
+let devtoolsTabsPersistTimer = null;
+
+function schedulePersistDevtoolsTabs() {
+  if (!chrome.storage?.session || devtoolsTabsPersistTimer) return;
+  devtoolsTabsPersistTimer = setTimeout(() => {
+    devtoolsTabsPersistTimer = null;
+    const entries = Object.fromEntries(
+      Array.from(devtoolsTabs.entries()).slice(0, 20).map(([key, value]) => [String(key), value])
+    );
+    chrome.storage.session.set({ [DEVTOOLS_TABS_STORAGE_KEY]: entries }).catch(() => {});
+  }, 250);
+}
 
 function isFreshTimestamp(value, ttlMs = DEVTOOLS_STATE_TTL_MS) {
   const time = Date.parse(value || "");
@@ -242,6 +271,8 @@ function setDevtoolsTabState(tabId, patch) {
   };
   const next = { ...current, ...patch, tabId: key };
   devtoolsTabs.set(key, next);
+  // DevTools writes do not wait for hydration; the hydration merge keeps in-memory state authoritative.
+  schedulePersistDevtoolsTabs();
   return next;
 }
 
@@ -501,11 +532,13 @@ chrome.runtime.onConnect.addListener((port) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   devtoolsTabs.delete(tabId);
+  schedulePersistDevtoolsTabs();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
     devtoolsTabs.delete(tabId);
+    schedulePersistDevtoolsTabs();
   }
 });
 
@@ -526,23 +559,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    const payload = buildDevtoolsStatePayload(tabId, "content-bridge-ready");
-    if (!payload) {
-      sendResponse({ ok: true, devtoolsConnected: false });
-      return false;
-    }
-
-    chrome.tabs.sendMessage(tabId, payload, (response) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({
-          ok: false,
-          devtoolsConnected: true,
-          error: chrome.runtime.lastError.message || "tabs-send-message-failed"
-        });
+    devtoolsTabsHydration.then(() => {
+      const payload = buildDevtoolsStatePayload(tabId, "content-bridge-ready");
+      if (!payload) {
+        sendResponse({ ok: true, devtoolsConnected: false });
         return;
       }
 
-      sendResponse({ ok: true, devtoolsConnected: true, response });
+      chrome.tabs.sendMessage(tabId, payload, (response) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({
+            ok: false,
+            devtoolsConnected: true,
+            error: chrome.runtime.lastError.message || "tabs-send-message-failed"
+          });
+          return;
+        }
+
+        sendResponse({ ok: true, devtoolsConnected: true, response });
+      });
+    }).catch((error) => {
+      console.log("[IG Comparator] devtools state hydration wait failed:", error?.message || error);
+      sendResponse({ ok: true, devtoolsConnected: false });
     });
     return true;
   }
