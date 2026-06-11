@@ -8,7 +8,7 @@
     const MAX_BODY_CHARS = 512_000;
     const MAX_STABLE_TICKS = 16;
     const MIN_STABLE_TICKS_AT_LIST_END = 6;
-    const DISPLAYED_COUNT_GAP_TOLERANCE = 5; // 표시 수와 목록 끝 확정 수집 수의 허용 격차(비활성 계정 추정 범위)
+    const DISPLAYED_COUNT_GAP_TOLERANCE = 5; // 표시 수와 목록 끝 확정 수집 수의 허용 격차(API 미반환 계정 추정 범위)
     const MAX_FOLLOW_STABLE_TICKS = 12;
     const MAX_MISMATCH_REVERIFY_PASSES = 1;
     const LIST_SETTLE_REQUIRED_TICKS = 3;
@@ -433,7 +433,7 @@
             status = "COMPLETE_HIGH_CONFIDENCE";
         } else if (expectedCount > 0 && verifiedCount < expectedCount && completion.completeAtListEnd) {
             status = "COMPLETE_AT_LIST_END";
-            warnings.push(`${label}가 화면 표시 수보다 ${completion.gap}명 적지만 목록 끝 도달이 확인되었습니다. 표시 수에 비활성화/탈퇴 계정이 포함됐을 가능성이 높아 diff 신뢰도에는 영향이 없습니다.`);
+            warnings.push(`${label}가 화면 표시 수보다 ${completion.gap}명 적지만 목록 끝 도달이 확인되었습니다. 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정되어 diff 신뢰도에는 영향이 없습니다.`);
         } else if (expectedCount > 0 && Math.abs(expectedCount - verifiedCount) <= 2) {
             status = "COMPLETE_BUT_LOW_MARGIN";
             if (verifiedCount !== expectedCount) {
@@ -824,7 +824,7 @@
             warnings.push({
                 code: "displayed_count_includes_inactive",
                 severity: "info",
-                message: `${label} 화면 표시 수가 목록 끝 확정 수집 수보다 ${completion.gap}명 많습니다. 비활성화/탈퇴 계정이 카운터에 포함된 경우로 추정되며 diff 신뢰도에는 영향이 없습니다.`,
+                message: `${label} 화면 표시 수가 목록 끝 확정 수집 수보다 ${completion.gap}명 많습니다. 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정되며 diff 신뢰도에는 영향이 없습니다.`,
                 affectedFields: []
             });
         }
@@ -3217,14 +3217,18 @@
             return sources.length > 0 && sources.every((source) => DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source));
         };
         const candidates = getUnconfirmedCandidates(mode);
-        const nonDomCandidateCount = candidates.filter((username) => !domTierCandidateFilter(username)).length;
-        return assessListCompletion({
-            expectedCount: expectedCount || 0,
-            verifiedCount,
-            endReason,
-            hasNetworkEvidence: hasConfirmedNetworkEvidence(mode),
-            nonDomCandidateCount
-        });
+        const domTierCandidates = candidates.filter(domTierCandidateFilter).sort();
+        const nonDomCandidateCount = candidates.length - domTierCandidates.length;
+        return {
+            ...assessListCompletion({
+                expectedCount: expectedCount || 0,
+                verifiedCount,
+                endReason,
+                hasNetworkEvidence: hasConfirmedNetworkEvidence(mode),
+                nonDomCandidateCount
+            }),
+            domTierCandidates: domTierCandidates.slice(0, 20)
+        };
     }
 
     function printCandidateUsers() {
@@ -3399,13 +3403,13 @@
         if (summary.expectedFollowersCount !== null && summary.expectedFollowersCount !== undefined) {
             console.log(`🧮 팔로워 수량 차이: ${summary.followersCount - summary.expectedFollowersCount}명`);
             if (summary.followersCompletion?.completeAtListEnd) {
-                console.log(`🧮 팔로워 차이 해석: 목록 끝 확정 - 비활성 계정 포함 추정 (${summary.followersCompletion.gap}명)`);
+                console.log(`🧮 팔로워 차이 해석: 목록 끝 확정 - 카운터에는 포함되지만 목록 API가 반환하지 않는 계정 추정 (${summary.followersCompletion.gap}명)`);
             }
         }
         if (summary.expectedFollowingCount !== null && summary.expectedFollowingCount !== undefined) {
             console.log(`🧮 팔로잉 수량 차이: ${summary.followingCount - summary.expectedFollowingCount}명`);
             if (summary.followingCompletion?.completeAtListEnd) {
-                console.log(`🧮 팔로잉 차이 해석: 목록 끝 확정 - 비활성 계정 포함 추정 (${summary.followingCompletion.gap}명)`);
+                console.log(`🧮 팔로잉 차이 해석: 목록 끝 확정 - 카운터에는 포함되지만 목록 API가 반환하지 않는 계정 추정 (${summary.followingCompletion.gap}명)`);
             }
         }
         if (summary.followersCollectionStatus) {
@@ -3860,7 +3864,12 @@
                 summary.followersCompletion = followersCompletion;
                 summary.followersCollectionStatus = "complete_at_list_end";
                 recordRunEvent("list_end_confirmed_below_displayed", { mode: "followers", ...followersCompletion });
-                console.log(`📋 팔로워 목록 끝 도달 확인: 화면 표시 ${followersTarget}명 중 ${followers.length}명 수집. 차이 ${followersCompletion.gap}명은 표시 수에 비활성화/탈퇴 계정이 포함된 경우일 가능성이 높습니다.`);
+                console.log(`📋 팔로워 목록 끝 도달 확인: 화면 표시 ${followersTarget}명 중 ${followers.length}명 수집. 차이 ${followersCompletion.gap}명은 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정됩니다.`);
+                if (followersCompletion.gap > 0 && followersCompletion.domTierCandidates.length === followersCompletion.gap) {
+                    console.log(`🔎 격차 ${followersCompletion.gap}명과 DOM 후보 ${followersCompletion.domTierCandidates.length}명이 일치합니다: ${followersCompletion.domTierCandidates.slice(0, 10).join(", ")}`);
+                    console.log("ℹ️ 이 후보들은 화면 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)일 가능성이 높습니다. __igFollowerExplainUser(\"username\") 으로 개별 확인할 수 있습니다.");
+                    recordRunEvent("gap_matches_dom_candidates", { mode: "followers", gap: followersCompletion.gap, candidates: followersCompletion.domTierCandidates.slice(0, 20) });
+                }
                 console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
             } else {
                 summary.followersReverify = await reverifyCurrentListCollection(followersTarget, state.collectedUsers, "followers");
@@ -3962,7 +3971,12 @@
                 summary.followingCompletion = followingCompletion;
                 summary.followingCollectionStatus = "complete_at_list_end";
                 recordRunEvent("list_end_confirmed_below_displayed", { mode: "following", ...followingCompletion });
-                console.log(`📋 팔로잉 목록 끝 도달 확인: 화면 표시 ${followingTarget}명 중 ${following.length}명 수집. 차이 ${followingCompletion.gap}명은 표시 수에 비활성화/탈퇴 계정이 포함된 경우일 가능성이 높습니다.`);
+                console.log(`📋 팔로잉 목록 끝 도달 확인: 화면 표시 ${followingTarget}명 중 ${following.length}명 수집. 차이 ${followingCompletion.gap}명은 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정됩니다.`);
+                if (followingCompletion.gap > 0 && followingCompletion.domTierCandidates.length === followingCompletion.gap) {
+                    console.log(`🔎 격차 ${followingCompletion.gap}명과 DOM 후보 ${followingCompletion.domTierCandidates.length}명이 일치합니다: ${followingCompletion.domTierCandidates.slice(0, 10).join(", ")}`);
+                    console.log("ℹ️ 이 후보들은 화면 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)일 가능성이 높습니다. __igFollowerExplainUser(\"username\") 으로 개별 확인할 수 있습니다.");
+                    recordRunEvent("gap_matches_dom_candidates", { mode: "following", gap: followingCompletion.gap, candidates: followingCompletion.domTierCandidates.slice(0, 20) });
+                }
                 console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
             } else {
                 summary.followingReverify = await reverifyCurrentListCollection(followingTarget, state.followingUsers, "following");
