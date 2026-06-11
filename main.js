@@ -7,6 +7,7 @@
     const IGNORED_URL_RE = /(edge-chat|mqtt|realtime|presence|logging|analytics|beacon|direct_v2|\/direct\/|upload|media\/upload)/i;
     const MAX_BODY_CHARS = 512_000;
     const MAX_STABLE_TICKS = 16;
+    const MIN_STABLE_TICKS_AT_LIST_END = 6;
     const DISPLAYED_COUNT_GAP_TOLERANCE = 5; // 표시 수와 목록 끝 확정 수집 수의 허용 격차(비활성 계정 추정 범위)
     const MAX_FOLLOW_STABLE_TICKS = 12;
     const MAX_MISMATCH_REVERIFY_PASSES = 1;
@@ -2908,6 +2909,19 @@
                 }
             }
 
+            const endSignalFresh = endSignal.visible && Date.now() - endSignal.atMs < 8000;
+            if (
+                stableTicks >= MIN_STABLE_TICKS_AT_LIST_END &&
+                endSignalFresh &&
+                recoveryAttempts === 0 &&
+                limitLabel > 0 &&
+                targetSet.size >= limitLabel - DISPLAYED_COUNT_GAP_TOLERANCE
+            ) {
+                console.log(`🏁 ${baseLog} 목록 끝이 확인되고 ${stableTicks}틱 연속 신규 없음 → 조기 종료합니다.`);
+                state.lastScrollEndReason = "stalled_at_list_end";
+                break;
+            }
+
             if (stableTicks >= MAX_STABLE_TICKS) {
                 console.log(`🏁 ${baseLog} 수집 정체. 목록 끝 또는 스크롤 컨테이너 불일치로 판단하고 종료합니다.`);
                 if (limitLabel > 0 && getCoverageRatio(targetSet.size, limitLabel) < LOW_COVERAGE_RECOVERY_RATIO) {
@@ -2917,7 +2931,7 @@
                     );
                 }
                 console.log("🧪 마지막 스크롤 진단:", diagnostic);
-                const endConfirmed = endSignal.visible && Date.now() - endSignal.atMs < 8000;
+                const endConfirmed = endSignalFresh;
                 state.lastScrollEndReason = recoveryAttempts > 0
                     ? "stalled_after_recovery"
                     : endConfirmed ? "stalled_at_list_end" : "stalled";
