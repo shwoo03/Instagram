@@ -28,6 +28,18 @@ const accounts = contract.sanitizeAccounts({
   followersWithoutMeFollowing: ['Followers.Only'],
   followersCandidates: ['Candidate.A'],
   followingCandidates: ['Candidate.B'],
+  evidence: {
+    iFollowButNotReturned: [
+      { username: 'Following.Only', level: 'reference', source: 'dom-fallback' },
+      { username: 'not-in-list', level: 'confirmed', source: 'debugger' }
+    ],
+    followersWithoutMeFollowing: [
+      { username: 'Followers.Only', level: 'confirmed', source: 'devtools' }
+    ],
+    followersCandidates: [
+      { username: 'Candidate.A', level: 'confirmed', source: 'not-allowed' }
+    ]
+  },
   truncated: { followingCandidates: true }
 });
 assert.equal(accounts.relationshipSet, 'assisted');
@@ -36,6 +48,22 @@ assert.deepEqual(Array.from(accounts.followersWithoutMeFollowing), ['followers.o
 assert.deepEqual(Array.from(accounts.followersCandidates), ['candidate.a']);
 assert.deepEqual(Array.from(accounts.followingCandidates), ['candidate.b']);
 assert.equal(accounts.truncated.followingCandidates, true);
+assert.deepEqual(
+  Array.from(accounts.evidence.iFollowButNotReturned, (item) => ({ ...item })),
+  [{ username: 'following.only', level: 'reference', source: 'dom-fallback' }]
+);
+assert.deepEqual(
+  Array.from(accounts.evidence.followersWithoutMeFollowing, (item) => ({ ...item })),
+  [{ username: 'followers.only', level: 'reference', source: 'devtools' }]
+);
+assert.deepEqual(
+  Array.from(accounts.evidence.followersCandidates, (item) => ({ ...item })),
+  [{ username: 'candidate.a', level: 'candidate', source: 'unknown' }]
+);
+assert.deepEqual(
+  Array.from(accounts.evidence.followingCandidates, (item) => ({ ...item })),
+  [{ username: 'candidate.b', level: 'candidate', source: 'unknown' }]
+);
 assert.equal(contract.sanitizeAccounts(null), null);
 
 console.log('account list contract fixtures passed');

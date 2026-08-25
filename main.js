@@ -247,14 +247,24 @@
         const warnings = Array.isArray(diffs.warnings)
             ? diffs.warnings.map((warning) => typeof warning === "string" ? warning : warning?.message).filter(Boolean).slice(0, 10)
             : [];
-        const accounts = summary.diffs ? globalThis.IGAccountListContract?.sanitizeAccounts({
-            relationshipSet: verdict.code === "CONFIRMED"
-                ? "strict"
-                : (verdict.code === "REFERENCE_ONLY" ? "assisted" : "partial"),
+        const relationshipSet = verdict.code === "CONFIRMED"
+            ? "strict"
+            : (verdict.code === "REFERENCE_ONLY" ? "assisted" : "partial");
+        const accountLists = {
             iFollowButNotReturned: visibleDiffs.iFollowButNotReturned || [],
             followersWithoutMeFollowing: visibleDiffs.followersWithoutMeFollowing || [],
             followersCandidates: getUnconfirmedCandidates("followers"),
             followingCandidates: getUnconfirmedCandidates("following")
+        };
+        const accounts = summary.diffs ? globalThis.IGAccountListContract?.sanitizeAccounts({
+            relationshipSet,
+            ...accountLists,
+            evidence: {
+                iFollowButNotReturned: buildCompactAccountEvidence(accountLists.iFollowButNotReturned, "following"),
+                followersWithoutMeFollowing: buildCompactAccountEvidence(accountLists.followersWithoutMeFollowing, "followers"),
+                followersCandidates: buildCompactAccountEvidence(accountLists.followersCandidates, "followers"),
+                followingCandidates: buildCompactAccountEvidence(accountLists.followingCandidates, "following")
+            }
         }) || null : null;
         return {
             schemaVersion: 1,
@@ -520,6 +530,27 @@
 
     function getSourceCounts(mode) {
         return { ...(state.sourceCountsCache[mode] || {}) };
+    }
+
+    function getCompactAccountEvidenceSource(username, mode) {
+        const sources = Array.from(state.userProvenance[mode]?.get(username)?.sources || []);
+        if (sources.includes("Debugger")) return "debugger";
+        if (sources.includes("DevTools")) return "devtools";
+        if (sources.some((source) => /^(XHR|fetch)$/.test(source) || /^page-(XHR|fetch)/i.test(source))) {
+            return "page-network";
+        }
+        if (sources.includes("dom-fallback")) return "dom-fallback";
+        if (sources.some((source) => DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source))) {
+            return "dom";
+        }
+        return sources.length > 1 ? "mixed" : "unknown";
+    }
+
+    function buildCompactAccountEvidence(usernames, mode) {
+        return (usernames || []).map((username) => ({
+            username,
+            source: getCompactAccountEvidenceSource(username, mode)
+        }));
     }
 
     function hasConfirmedNetworkEvidence(mode) {

@@ -97,6 +97,14 @@ details[open] > .account-summary::before {
   min-width: 0;
 }
 
+.account-evidence-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .account-name-list a {
   display: flex;
   min-width: 0;
@@ -118,6 +126,7 @@ details[open] > .account-summary::before {
 }
 
 .account-name-list a:focus-visible,
+.account-evidence-button:focus-visible,
 .account-more-button:focus-visible,
 .account-summary:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--info) 42%, transparent);
@@ -132,6 +141,62 @@ details[open] > .account-summary::before {
 
 .account-name-list.is-candidate a {
   color: var(--warning);
+}
+
+.account-evidence-button {
+  min-width: 38px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.account-evidence-button[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--line));
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  color: var(--success);
+}
+
+.account-evidence-button[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--info) 34%, var(--line));
+  background: color-mix(in srgb, var(--info) 9%, var(--surface));
+  color: var(--info);
+}
+
+.account-evidence-button[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--line));
+  background: color-mix(in srgb, var(--warning) 11%, var(--surface));
+  color: var(--warning);
+}
+
+.account-evidence-button:hover {
+  filter: brightness(0.97);
+}
+
+.account-evidence-button[aria-expanded="true"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.account-evidence-reason {
+  margin: 6px 2px 0;
+  border-left: 2px solid color-mix(in srgb, var(--info) 32%, var(--line));
+  padding: 7px 9px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--text-soft);
+  font-size: 10.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.account-name-list.is-candidate .account-evidence-reason {
+  border-left-color: color-mix(in srgb, var(--warning) 44%, var(--line));
 }
 
 .account-list-controls {

@@ -223,3 +223,14 @@ Next operator action: open `chrome://extensions`, reload the unpacked extension 
 - Per-tab progress stores only four derived username lists, each normalized/deduplicated/sorted and capped at 1,000 by a background sanitizer.
 - Validation passed: `npm test`, all six `npm run e2e` scenarios, focused strict/assisted progress assertions, `npm run ui:e2e`, and popup 320/360/420 plus panel 320/736/1024 overflow checks.
 - Responsive screenshots were visually inspected in both default-collapsed and opened-list states. Real Instagram username parity remains a manual Chrome check after extension reload.
+
+## 2026-08-25 Per-account Evidence UI
+
+- Manifest is now v1.5.0.
+- `main.js` converts each displayed account's strongest runtime provenance into a bounded source code: Debugger, DevTools, page network, DOM fallback, DOM, mixed, or unknown.
+- `account-list-contract.js` forces the evidence level from the containing result set, filters evidence to displayed sanitized usernames, and replaces unrecognized sources with `unknown`. A candidate cannot become confirmed through supplied evidence metadata.
+- `account-list-ui.js` renders the shared popup/panel `확정`, `참고`, and `후보` buttons. The username link still opens the fixed Instagram profile origin; the separate button expands a Korean explanation with accessible `aria-expanded`/`aria-controls` state.
+- Evidence explanations are generated from fixed UI templates. No raw response, URL, header, cookie, DM, or free-form evidence description was added to storage.
+- Validation passed: `npm test`; all six `npm run e2e` scenarios including DOM-reference and DevTools-strict evidence assertions; `npm run ui:e2e` at popup 320/360/420 and panel 320/736/1024; visual inspection of the 320px expanded reason; and `git diff --check`.
+- Partial-side recollection/recovery was explicitly removed from this change at the user's request.
+- Remaining manual check: reload the unpacked extension, reload the Instagram profile, run one comparison, then open popup and DevTools account lists and confirm the badge source/reason matches the observed collection mode.

@@ -168,6 +168,8 @@ async function scenarioStandard(browser, origin) {
   assert.equal(progress.accounts?.iFollowButNotReturned?.length, EXPECTED.followingOnly);
   assert.deepEqual(progress.accounts?.followersCandidates, []);
   assert.deepEqual(progress.accounts?.followingCandidates, []);
+  assert(progress.accounts?.evidence?.followersWithoutMeFollowing?.every((item) => item.level === 'reference' && item.source === 'dom'));
+  assert(progress.accounts?.evidence?.iFollowButNotReturned?.every((item) => item.level === 'reference' && item.source === 'dom'));
   await page.close();
 }
 
@@ -237,6 +239,8 @@ async function scenarioDisplayedCountIncludesInactive(browser, origin) {
   assert.equal(progress.accounts?.relationshipSet, 'strict');
   assert.equal(progress.accounts?.followersWithoutMeFollowing?.length, EXPECTED.followersOnly);
   assert.equal(progress.accounts?.iFollowButNotReturned?.length, EXPECTED.followingOnly);
+  assert(progress.accounts?.evidence?.followersWithoutMeFollowing?.every((item) => item.level === 'confirmed' && item.source === 'devtools'));
+  assert(progress.accounts?.evidence?.iFollowButNotReturned?.every((item) => item.level === 'confirmed' && item.source === 'devtools'));
   assert.equal(result.followersCompletion?.completeAtListEnd, true);
   assert.equal(result.followingCompletion?.completeAtListEnd, true);
   assert(logs.some((line) => line.includes('확정 비교 가능')), 'missing confirmed trust gate log');

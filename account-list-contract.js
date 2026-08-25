@@ -14,6 +14,15 @@
     "followingCandidates"
   ]);
   const RELATIONSHIP_SETS = new Set(["strict", "assisted", "partial"]);
+  const EVIDENCE_SOURCES = new Set([
+    "debugger",
+    "devtools",
+    "page-network",
+    "dom-fallback",
+    "dom",
+    "mixed",
+    "unknown"
+  ]);
 
   function normalizeLimit(value) {
     const number = Number(value);
@@ -42,6 +51,24 @@
     });
   }
 
+  function sanitizeEvidenceList(value, usernames, level) {
+    const byUsername = new Map();
+    for (const item of Array.isArray(value) ? value : []) {
+      const username = normalizeUsername(item?.username);
+      if (!username || byUsername.has(username)) continue;
+      byUsername.set(username, {
+        username,
+        level,
+        source: EVIDENCE_SOURCES.has(item?.source) ? item.source : "unknown"
+      });
+    }
+
+    return Object.freeze(usernames.map((username) => {
+      const evidence = byUsername.get(username) || { username, level, source: "unknown" };
+      return Object.freeze(evidence);
+    }));
+  }
+
   function sanitizeAccounts(value, limit = MAX_USERNAMES_PER_LIST) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const relationshipSet = RELATIONSHIP_SETS.has(value.relationshipSet)
@@ -49,14 +76,20 @@
       : "partial";
     const result = { relationshipSet };
     const truncated = {};
+    const evidence = {};
 
     for (const key of LIST_KEYS) {
       const list = sanitizeUsernameList(value[key], limit);
       result[key] = list.usernames;
       truncated[key] = list.truncated || value.truncated?.[key] === true;
+      const level = key.endsWith("Candidates")
+        ? "candidate"
+        : relationshipSet === "strict" ? "confirmed" : "reference";
+      evidence[key] = sanitizeEvidenceList(value.evidence?.[key], list.usernames, level);
     }
 
     result.truncated = Object.freeze(truncated);
+    result.evidence = Object.freeze(evidence);
     return Object.freeze(result);
   }
 

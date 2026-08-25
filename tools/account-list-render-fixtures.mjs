@@ -26,6 +26,21 @@ const record = {
     followersWithoutMeFollowing: ['follower_one', 'follower_two'],
     followersCandidates: ['candidate_follower_a', 'candidate_follower_b'],
     followingCandidates: ['candidate_following_a', 'candidate_following_b'],
+    evidence: {
+      iFollowButNotReturned: onlyUsers.map((username) => ({ username, level: 'confirmed', source: 'debugger' })),
+      followersWithoutMeFollowing: [
+        { username: 'follower_one', level: 'confirmed', source: 'devtools' },
+        { username: 'follower_two', level: 'confirmed', source: 'page-network' }
+      ],
+      followersCandidates: [
+        { username: 'candidate_follower_a', level: 'candidate', source: 'dom' },
+        { username: 'candidate_follower_b', level: 'candidate', source: 'unknown' }
+      ],
+      followingCandidates: [
+        { username: 'candidate_following_a', level: 'candidate', source: 'page-network' },
+        { username: 'candidate_following_b', level: 'candidate', source: 'dom' }
+      ]
+    },
     truncated: {}
   },
   sources: { devtoolsReady: false, debuggerReady: false, debuggerEvidence: true, pageNetworkReady: false, domOnly: false },
@@ -97,6 +112,18 @@ try {
     assert.match(firstLink.rel, /noopener/);
     assert.match(firstLink.rel, /noreferrer/);
 
+    const firstEvidenceButton = '#accountDetailHost details:nth-of-type(1) .account-evidence-button';
+    assert.equal(await page.$eval(firstEvidenceButton, (button) => button.textContent), '확정');
+    assert.equal(await page.$eval(firstEvidenceButton, (button) => button.getAttribute('aria-expanded')), 'false');
+    await page.click(firstEvidenceButton);
+    assert.equal(await page.$eval(firstEvidenceButton, (button) => button.getAttribute('aria-expanded')), 'true');
+    assert.match(
+      await page.$eval('#accountDetailHost details:nth-of-type(1) .account-evidence-reason', (reason) => reason.textContent),
+      /자동 네트워크/
+    );
+    const evidenceScreenshot = `/tmp/ig-account-lists-${testCase.file.replace('.html', '')}-${testCase.width}-evidence.png`;
+    await page.screenshot({ path: evidenceScreenshot, fullPage: true });
+
     await page.click('#accountDetailHost details:nth-of-type(1) .account-more-button');
     assert.equal(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list li', (items) => items.length), 25);
 
@@ -113,7 +140,7 @@ try {
     assert.equal(layout.scrollWidth > layout.clientWidth || layout.bodyScrollWidth > layout.bodyClientWidth, false);
     const openScreenshot = `/tmp/ig-account-lists-${testCase.file.replace('.html', '')}-${testCase.width}-open.png`;
     await page.screenshot({ path: openScreenshot, fullPage: true });
-    results.push({ ...testCase, closedScreenshot, openScreenshot, ...layout });
+    results.push({ ...testCase, closedScreenshot, evidenceScreenshot, openScreenshot, ...layout });
     await page.close();
   }
 } finally {

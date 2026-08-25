@@ -44,6 +44,16 @@
 - Done: pass pure contract/UI fixtures, all six existing collection E2E scenarios, focused strict/assisted progress assertions, and responsive Chromium render checks.
 - Open: reload the unpacked extension and confirm popup/panel usernames against one real Instagram comparison.
 
+## 2026-08-25 Per-account Evidence UI
+
+- Done: add a sanitized per-account evidence contract with only `confirmed`/`reference`/`candidate` levels and fixed source codes.
+- Done: derive the strongest source from runtime provenance without storing raw responses, URLs, headers, or free-form evidence text.
+- Done: show `확정`, `참고`, or `후보` beside each username in both popup and DevTools panel; clicking the badge expands a Korean reason while the username still opens the Instagram profile.
+- Done: keep candidate accounts excluded from final comparison even when their strongest observed source is Debugger or DevTools.
+- Done: pass `npm test`, all six `npm run e2e` scenarios, and `npm run ui:e2e` at popup 320/360/420 and panel 320/736/1024 without horizontal overflow.
+- Deferred by user choice: partial-side recollection and recovery controls.
+- Open: reload v1.5.0 and confirm evidence badges/reasons against one real Instagram comparison.
+
 ## 2026-06-06 Harness Stabilization Backlog
 
 - Done: add runtime DevTools preflight and page-network auto-assist before list collection.
