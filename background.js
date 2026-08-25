@@ -1,4 +1,4 @@
-importScripts("accuracy-engine.js", "network-payload-parser.js", "debugger-capture.js");
+importScripts("accuracy-engine.js", "account-list-contract.js", "network-payload-parser.js", "debugger-capture.js");
 
 const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
 const RUN_PROGRESS_PREFIX = "ig_run_progress:tab:";
@@ -82,6 +82,7 @@ function sanitizeRunProgress(value, tabId) {
       followersOnly: getSafeNonNegativeInteger(value.counts?.followersOnly),
       followingOnly: getSafeNonNegativeInteger(value.counts?.followingOnly)
     },
+    accounts: globalThis.IGAccountListContract.sanitizeAccounts(value.accounts),
     sources: {
       devtoolsReady: Boolean(value.sources?.devtoolsReady),
       debuggerReady: Boolean(value.sources?.debuggerReady),
@@ -617,7 +618,7 @@ async function injectInstagramCollector(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["accuracy-engine.js", "main.js"]
+    files: ["accuracy-engine.js", "account-list-contract.js", "main.js"]
   });
 }
 

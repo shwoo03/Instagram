@@ -247,6 +247,15 @@
         const warnings = Array.isArray(diffs.warnings)
             ? diffs.warnings.map((warning) => typeof warning === "string" ? warning : warning?.message).filter(Boolean).slice(0, 10)
             : [];
+        const accounts = summary.diffs ? globalThis.IGAccountListContract?.sanitizeAccounts({
+            relationshipSet: verdict.code === "CONFIRMED"
+                ? "strict"
+                : (verdict.code === "REFERENCE_ONLY" ? "assisted" : "partial"),
+            iFollowButNotReturned: visibleDiffs.iFollowButNotReturned || [],
+            followersWithoutMeFollowing: visibleDiffs.followersWithoutMeFollowing || [],
+            followersCandidates: getUnconfirmedCandidates("followers"),
+            followingCandidates: getUnconfirmedCandidates("following")
+        }) || null : null;
         return {
             schemaVersion: 1,
             runId: state.runId,
@@ -271,6 +280,7 @@
                 followersOnly: visibleDiffs.followersWithoutMeFollowing?.length || 0,
                 followingOnly: visibleDiffs.iFollowButNotReturned?.length || 0
             },
+            accounts,
             sources: {
                 devtoolsReady: isDevtoolsBridgeFresh(),
                 debuggerReady: isDebuggerBridgeReady(),
