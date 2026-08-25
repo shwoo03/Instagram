@@ -1,10 +1,7 @@
 {
-  const USERNAME_RE = /^[a-zA-Z0-9._]{1,30}$/;
-  const MAX_BODY_CHARS = 512_000;
   const READY_RETRY_MS = 2000;
   const STATUS_RETRY_MS = 5000;
-  const CANDIDATE_URL_RE = /(graphql|friendships|followers|following|\/api\/v1\/|\/web\/friendships)/i;
-  const JSON_MIME_RE = /(json|javascript|text\/plain)/i;
+  const parser = globalThis.IGNetworkPayloadParser;
 
   const stats = {
     matched: 0,
@@ -29,12 +26,7 @@
   const pending = new Map();
 
   function getSafeUrlLabel(url) {
-    try {
-      const parsed = new URL(url);
-      return `${parsed.hostname}${parsed.pathname}`;
-    } catch {
-      return String(url || "").split("?")[0].slice(0, 120);
-    }
+    return parser?.getSafeEndpointLabelFromUrl(url) || "instagram:network:candidate";
   }
 
   function getStatsSnapshot() {
@@ -45,111 +37,12 @@
     return chrome.devtools.inspectedWindow.tabId;
   }
 
-  function isInstagramUrl(url) {
-    try {
-      const parsed = new URL(url);
-      return parsed.protocol === "https:" &&
-        (parsed.hostname === "instagram.com" || parsed.hostname.endsWith(".instagram.com"));
-    } catch {
-      return false;
-    }
-  }
-
   function isCandidateRequest(request) {
-    const url = request?.request?.url || "";
-    if (!isInstagramUrl(url)) return false;
-    if (!CANDIDATE_URL_RE.test(url)) return false;
-
-    const mimeType = request?.response?.content?.mimeType || request?.response?.mimeType || "";
-    if (mimeType && !JSON_MIME_RE.test(mimeType)) return false;
-
-    return true;
-  }
-
-  function detectMode(url) {
-    let pathname = "";
-    try {
-      pathname = new URL(String(url || "")).pathname.toLowerCase();
-    } catch {
-      pathname = String(url || "").split("?")[0].toLowerCase();
-    }
-
-    const lower = String(url || "").toLowerCase();
-    if (pathname.includes("/followers/")) return "followers";
-    if (pathname.includes("/following/")) return "following";
-    if (lower.includes("graphql") || lower.includes("friendships") || lower.includes("followers") || lower.includes("following")) return "active";
-    return "unknown";
-  }
-
-  function getSafeEndpointLabel(mode) {
-    if (mode === "followers" || mode === "following") {
-      return `instagram:endpoint:${mode}`;
-    }
-    return "instagram:network:candidate";
-  }
-
-  function looksLikeJsonUserPayload(text) {
-    if (!text || typeof text !== "string") return false;
-    const trimmed = text.trim();
-    if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return false;
-    return /"username"|"users"|"items"|"edges"|"nodes"|"data"/.test(trimmed);
-  }
-
-  function addUsername(username, targetSet) {
-    if (typeof username !== "string") return false;
-    const trimmed = username.trim();
-    if (!USERNAME_RE.test(trimmed)) return false;
-    const before = targetSet.size;
-    targetSet.add(trimmed.toLowerCase());
-    return targetSet.size > before;
-  }
-
-  // [ig-walker:start] 이 블록은 devtools.js / page-network-bridge.js 간 byte-identical 해야 함 (tools/walker-fixtures.mjs가 검증)
-  function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0, insideListContainer = false) {
-    if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) {
-      return;
-    }
-
-    seen.add(payload);
-
-    if (Array.isArray(payload)) {
-      payload.forEach((item) => collectUsernamesFromPayload(item, targetSet, seen, depth + 1, insideListContainer));
-      return;
-    }
-
-    if (insideListContainer && Object.prototype.hasOwnProperty.call(payload, "username")) {
-      addUsername(payload.username, targetSet);
-    }
-
-    const userListFields = ["users", "items", "edges", "nodes", "data"];
-    for (const field of userListFields) {
-      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
-      const value = payload[field];
-
-      if (field === "edges" && Array.isArray(value)) {
-        value.forEach((edge) => {
-          if (edge?.node) collectUsernamesFromPayload(edge.node, targetSet, seen, depth + 1, true);
-        });
-        continue;
-      }
-
-      collectUsernamesFromPayload(value, targetSet, seen, depth + 1, insideListContainer || field !== "data");
-    }
-  }
-  // [ig-walker:end]
-
-  function decodeContent(content, encoding) {
-    if (encoding !== "base64") return content || "";
-    try {
-      const binary = atob(content || "");
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return new TextDecoder("utf-8").decode(bytes);
-    } catch {
-      return "";
-    }
+    return parser?.isCandidateRequestMetadata({
+      url: request?.request?.url || "",
+      mimeType: request?.response?.content?.mimeType || request?.response?.mimeType || "",
+      resourceType: request?._resourceType || request?.resourceType || ""
+    }) === true;
   }
 
   function connectPort() {
@@ -238,67 +131,46 @@
 
   function sendUsernamesToInspectedTab(request, body, encoding) {
     const url = request.request.url || "";
-    const mode = detectMode(url);
-    if (mode !== "followers" && mode !== "following" && mode !== "active") {
+    const result = parser?.parseResponse({
+      url,
+      status: request.response.status || 0,
+      mimeType: request.response.content?.mimeType || request.response.mimeType || "",
+      resourceType: request?._resourceType || request?.resourceType || "",
+      body,
+      encoding
+    });
+    if (!result?.ok) {
       stats.ignored++;
+      if (result?.reason === "body-too-large" || result?.reason === "base64-decode-failed") {
+        stats.lastError = result.reason;
+        console.log("[IG DevTools] response ignored:", getSafeUrlLabel(url), result.reason);
+        sendStatus(result.reason);
+      }
       return;
     }
 
-    const decodedBody = decodeContent(body, encoding);
-    if (!looksLikeJsonUserPayload(decodedBody)) {
-      stats.ignored++;
-      return;
-    }
-
-    if (decodedBody.length > MAX_BODY_CHARS) {
-      stats.ignored++;
-      stats.lastError = `body-too-large:${decodedBody.length}`;
-      console.log("[IG DevTools] body too large, ignored:", getSafeUrlLabel(url), decodedBody.length);
-      sendStatus("body-too-large");
-      return;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(decodedBody);
-    } catch {
-      stats.ignored++;
-      return;
-    }
-
-    const usernames = new Set();
-    collectUsernamesFromPayload(parsed, usernames);
-    const paginationEvidence = globalThis.IGAccuracyEngine?.extractPaginationEvidence(parsed) || null;
-    const exactEndpoint = mode === "followers" || mode === "following";
-    if (usernames.size === 0 && !(exactEndpoint && paginationEvidence?.paginationRecognized)) {
-      stats.ignored++;
-      return;
-    }
-
+    const evidence = result.evidence;
     stats.sent++;
     stats.lastCaptureAt = new Date().toISOString();
     postToBackground("IG_DEVTOOLS_USERNAMES", {
-      endpoint: getSafeEndpointLabel(mode),
-      status: request.response.status || 0,
-      mimeType: request.response.content?.mimeType || request.response.mimeType || "",
-      usernames: Array.from(usernames),
-      mode,
-      pagination: paginationEvidence ? {
-        exactEndpoint,
-        itemCount: paginationEvidence.itemCount,
-        recognized: paginationEvidence.paginationRecognized,
-        hasMore: paginationEvidence.hasMore,
-        terminal: paginationEvidence.terminal,
-        terminalReason: paginationEvidence.terminalReason
-      } : null
+      endpoint: evidence.endpoint,
+      status: evidence.status,
+      mimeType: evidence.mimeType,
+      usernames: evidence.usernames,
+      mode: evidence.mode,
+      pagination: evidence.pagination
     });
-    console.log("[IG DevTools] captured JSON response:", getSafeUrlLabel(url), usernames.size, getStatsSnapshot());
+    console.log("[IG DevTools] captured JSON response:", evidence.endpoint, evidence.usernames.length, getStatsSnapshot());
   }
 
   chrome.devtools.network.onRequestFinished.addListener((request) => {
     const requestUrl = request?.request?.url || "";
     const responseStatus = request?.response?.status || 0;
-    if (responseStatus === 429 && isInstagramUrl(requestUrl) && CANDIDATE_URL_RE.test(requestUrl)) {
+    if (responseStatus === 429 && parser?.isCandidateRequestMetadata({
+      url: requestUrl,
+      mimeType: request?.response?.content?.mimeType || request?.response?.mimeType || "",
+      resourceType: request?._resourceType || request?.resourceType || ""
+    })) {
       stats.lastError = "rate-limited-429";
       console.log("[IG DevTools] 429 rate limit observed:", getSafeUrlLabel(requestUrl));
       sendStatus("rate-limited");

@@ -10,9 +10,9 @@ function extractWalker(file) {
   return text.slice(start, end).replace(/^[ \t]+/gm, '').replace(/\s+/g, ' ').trim();
 }
 
-const devtoolsWalker = extractWalker('devtools.js');
+const parserWalker = extractWalker('network-payload-parser.js');
 const pageBridgeWalker = extractWalker('page-network-bridge.js');
-assert.equal(devtoolsWalker, pageBridgeWalker, 'devtools/page-network walker drifted');
+assert.equal(parserWalker, pageBridgeWalker, 'parser/page-network walker drifted');
 
 function loadWalkerFrom(file, functionName) {
   const text = fs.readFileSync(file, 'utf8');
@@ -75,7 +75,7 @@ function runMainWalkerFixture() {
   assert.deepEqual(collect({ data: { username: 'y' } }), []);
 }
 
-runExternalWalkerFixture('devtools.js');
+runExternalWalkerFixture('network-payload-parser.js');
 runExternalWalkerFixture('page-network-bridge.js');
 runMainWalkerFixture();
 console.log('walker fixtures passed');

@@ -116,7 +116,7 @@
       return /"username"|"users"|"items"|"edges"|"nodes"|"data"/.test(trimmed);
     }
 
-  // [ig-walker:start] 이 블록은 devtools.js / page-network-bridge.js 간 byte-identical 해야 함 (tools/walker-fixtures.mjs가 검증)
+  // [ig-walker:start] 이 블록은 strict parser / page bridge 간 byte-identical 해야 함 (tools/walker-fixtures.mjs가 검증)
   function collectUsernamesFromPayload(payload, targetSet, seen = new WeakSet(), depth = 0, insideListContainer = false) {
     if (!payload || typeof payload !== "object" || seen.has(payload) || depth > 12) {
       return;
