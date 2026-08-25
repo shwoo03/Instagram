@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --check accuracy-engine.js && node --check network-payload-parser.js && node --check main.js && node --check background.js && node --check devtools.js && node --check page-network-bridge.js && node --check popup.js && node --check devtools-panel.js && node tools/accuracy-engine-fixtures.mjs && node tools/network-payload-parser-fixtures.mjs && node tools/walker-fixtures.mjs && node tools/compare-fixtures.mjs",
+    "test": "node --check accuracy-engine.js && node --check network-payload-parser.js && node --check debugger-capture.js && node --check main.js && node --check background.js && node --check devtools.js && node --check page-network-bridge.js && node --check popup.js && node --check devtools-panel.js && node tools/accuracy-engine-fixtures.mjs && node tools/network-payload-parser-fixtures.mjs && node tools/debugger-capture-fixtures.mjs && node tools/walker-fixtures.mjs && node tools/compare-fixtures.mjs",
     "e2e": "node tools/e2e/run.mjs"
   },
   "devDependencies": {

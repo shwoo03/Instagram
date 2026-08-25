@@ -1,5 +1,8 @@
+importScripts("accuracy-engine.js", "network-payload-parser.js", "debugger-capture.js");
+
 const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
 const RUN_PROGRESS_PREFIX = "ig_run_progress:tab:";
+const automaticCaptureAttempts = new Map();
 
 function getValidTabId(value) {
   const tabId = Number(value);
@@ -81,6 +84,8 @@ function sanitizeRunProgress(value, tabId) {
     },
     sources: {
       devtoolsReady: Boolean(value.sources?.devtoolsReady),
+      debuggerReady: Boolean(value.sources?.debuggerReady),
+      debuggerEvidence: Boolean(value.sources?.debuggerEvidence),
       pageNetworkReady: Boolean(value.sources?.pageNetworkReady),
       domOnly: Boolean(value.sources?.domOnly)
     },
@@ -129,6 +134,24 @@ function storeRunProgress(message, sender, sendResponse) {
   });
 }
 
+async function prepareAutomaticCapture(tabId) {
+  await devtoolsTabsHydration;
+  if (buildDevtoolsStatePayload(tabId, "collection-start")) {
+    const result = { mode: "devtools", ok: true, reason: "devtools-bridge-fresh" };
+    automaticCaptureAttempts.set(tabId, result);
+    return result;
+  }
+  const result = await debuggerController.start(tabId);
+  const prepared = {
+    mode: result.ok ? "debugger" : "fallback",
+    ok: result.ok,
+    reason: result.reason || "debugger-ready",
+    captureSessionId: result.session?.captureSessionId || ""
+  };
+  automaticCaptureAttempts.set(tabId, prepared);
+  return prepared;
+}
+
 function startCollectionFromUi(message, sendResponse) {
   const tabId = getValidTabId(message.tabId);
   if (tabId === null) {
@@ -142,8 +165,15 @@ function startCollectionFromUi(message, sendResponse) {
       return;
     }
 
-    return injectInstagramCollector(tabId).then(() => {
-      sendResponse({ ok: true, tabId });
+    return prepareAutomaticCapture(tabId).then((capture) => injectInstagramCollector(tabId).then(() => {
+      sendResponse({ ok: true, tabId, capture });
+    }).catch(async (error) => {
+      if (capture.captureSessionId) {
+        await debuggerController.stop(tabId, "collector-injection-failed", capture.captureSessionId);
+      }
+      throw error;
+    })).catch((error) => {
+      throw error;
     });
   }).catch((error) => {
     sendResponse({ ok: false, error: error?.message || "collection-start-failed" });
@@ -211,6 +241,7 @@ function compactDebugReport(value) {
     following: value.following || null,
     sources: {
       devtoolsBridge: value.sources?.devtoolsBridge || null,
+      debuggerBridge: value.sources?.debuggerBridge || null,
       pageNetworkBridge: value.sources?.pageNetworkBridge || null,
       dom: {
         followersEndReason: value.sources?.dom?.followersEndReason || null,
@@ -464,6 +495,71 @@ function buildDevtoolsStatePayload(tabId, reason = "background-state") {
   };
 }
 
+function sanitizeDebuggerPagination(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    exactEndpoint: Boolean(value.exactEndpoint),
+    itemCount: getSafeNonNegativeInteger(value.itemCount),
+    recognized: Boolean(value.recognized),
+    hasMore: typeof value.hasMore === "boolean" ? value.hasMore : null,
+    terminal: Boolean(value.terminal),
+    terminalReason: String(value.terminalReason || "").slice(0, 80)
+  };
+}
+
+function relayDebuggerPayload(tabId, payload) {
+  const safeId = getValidTabId(tabId);
+  if (safeId === null) return;
+  chrome.tabs.sendMessage(safeId, payload, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+function relayDebuggerEvidence(evidence) {
+  relayDebuggerPayload(evidence.tabId, {
+    type: "IG_DEBUGGER_USERNAMES",
+    source: "debugger-network",
+    schemaVersion: 1,
+    captureSessionId: String(evidence.captureSessionId || "").slice(0, 100),
+    runId: String(evidence.runId || "").slice(0, 100),
+    profile: getSafeProfile(evidence.profile),
+    endpoint: String(evidence.endpoint || "instagram:network:candidate").slice(0, 80),
+    status: getSafeNonNegativeInteger(evidence.status),
+    mimeType: String(evidence.mimeType || "").slice(0, 120),
+    usernames: Array.isArray(evidence.usernames) ? evidence.usernames.slice(0, 2000) : [],
+    mode: ["followers", "following", "active"].includes(evidence.mode) ? evidence.mode : "unknown",
+    confidence: evidence.confidence === "exact" ? "exact" : "candidate",
+    pagination: sanitizeDebuggerPagination(evidence.pagination),
+    capturedAt: evidence.capturedAt || new Date().toISOString()
+  });
+}
+
+function relayDebuggerStatus(status) {
+  const messageType = status.type === "ready"
+    ? "IG_DEBUGGER_READY"
+    : (status.type === "detached" ? "IG_DEBUGGER_DETACHED" : "IG_DEBUGGER_STATUS");
+  relayDebuggerPayload(status.tabId, {
+    type: messageType,
+    source: "debugger-network",
+    schemaVersion: 1,
+    captureSessionId: String(status.captureSessionId || "").slice(0, 100),
+    runId: String(status.runId || "").slice(0, 100),
+    profile: getSafeProfile(status.profile),
+    status: String(status.type || "status").slice(0, 40),
+    reason: String(status.reason || "unknown").slice(0, 100),
+    error: String(status.error || "").slice(0, 120),
+    httpStatus: getSafeNonNegativeInteger(status.httpStatus),
+    capturedAt: status.capturedAt || new Date().toISOString()
+  });
+}
+
+const debuggerController = globalThis.IGDebuggerCapture.createController({
+  chromeApi: chrome,
+  parser: globalThis.IGNetworkPayloadParser,
+  onEvidence: relayDebuggerEvidence,
+  onStatus: relayDebuggerStatus
+});
+
 function storeRunSnapshot(message, sendResponse) {
   if (!chrome.storage?.session) {
     sendResponse({ ok: false, error: "storage-session-unavailable" });
@@ -607,7 +703,7 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
 
-  injectInstagramCollector(tab.id).catch((error) => {
+  prepareAutomaticCapture(tab.id).then(() => injectInstagramCollector(tab.id)).catch((error) => {
     console.log("[IG Comparator] injection failed:", error?.message || error);
   });
 });
@@ -669,6 +765,8 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  debuggerController.stop(tabId, "tab-removed").catch(() => {});
+  automaticCaptureAttempts.delete(tabId);
   devtoolsTabs.delete(tabId);
   schedulePersistDevtoolsTabs();
   const progressKey = getRunProgressKey(tabId);
@@ -679,6 +777,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
+    debuggerController.stop(tabId, "tab-navigated").catch(() => {});
+    automaticCaptureAttempts.delete(tabId);
     devtoolsTabs.delete(tabId);
     schedulePersistDevtoolsTabs();
     const progressKey = getRunProgressKey(tabId);
@@ -695,6 +795,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "IG_START_COLLECTION") {
     startCollectionFromUi(message, sendResponse);
+    return true;
+  }
+
+  if (message.type === "IG_DEBUGGER_BIND") {
+    if (message.source !== "instagram-collector" || message.schemaVersion !== 1) {
+      sendResponse({ ok: false, reason: "invalid-debugger-bind-schema" });
+      return false;
+    }
+    const tabId = getValidTabId(sender?.tab?.id);
+    if (tabId === null) {
+      sendResponse({ ok: false, reason: "sender-tab-unavailable" });
+      return false;
+    }
+    const bindResult = debuggerController.bind(tabId, {
+      runId: message.runId,
+      profile: message.profile
+    });
+    const preparation = automaticCaptureAttempts.get(tabId);
+    sendResponse(bindResult.ok ? bindResult : {
+      ...bindResult,
+      reason: preparation?.reason || bindResult.reason,
+      captureMode: preparation?.mode || "fallback"
+    });
+    return false;
+  }
+
+  if (message.type === "IG_DEBUGGER_STOP") {
+    if (message.source !== "instagram-collector" || message.schemaVersion !== 1) {
+      sendResponse({ ok: false, reason: "invalid-debugger-stop-schema" });
+      return false;
+    }
+    const tabId = getValidTabId(sender?.tab?.id);
+    if (tabId === null) {
+      sendResponse({ ok: false, reason: "sender-tab-unavailable" });
+      return false;
+    }
+    debuggerController.stop(
+      tabId,
+      message.reason || "run-finished",
+      String(message.captureSessionId || ""),
+      String(message.runId || "")
+    ).then((result) => {
+      automaticCaptureAttempts.delete(tabId);
+      sendResponse(result);
+    }).catch((error) => {
+      sendResponse({ ok: false, reason: error?.message || "debugger-stop-failed" });
+    });
     return true;
   }
 
