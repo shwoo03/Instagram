@@ -34,17 +34,29 @@ DevTools capture is optional and must stay privacy-preserving:
 - It should log safe URL labels without query strings where possible.
 - It should relay only derived username arrays and metadata to `main.js`.
 
+## Automatic Debugger Capture
+
+The local-only build intentionally adopts the powerful `debugger` permission:
+
+- Attach only after the user starts a comparison and only when a fresh DevTools bridge is absent.
+- Use CDP `Network` only; do not issue Instagram list requests or enable unrelated domains.
+- Never attach to a target already owned by DevTools or another debugger.
+- Bind evidence to tab, run ID, profile, and capture-session ID.
+- Retrieve only bounded candidate response bodies, immediately extract derived usernames/pagination, and discard raw bodies.
+- Never relay or store URLs with query strings, request/response headers, cookies, tokens, raw bodies, or DMs.
+- Detach on completion, failure, navigation, tab close, or user/Chrome cancellation. Do not auto-reattach.
+
 ## Extension Permissions
 
 Current permissions should stay minimal:
 
 - `activeTab`
+- `debugger` (local-only, run-scoped automatic capture)
 - `scripting`
 - `storage`
 
-Avoid adding high-risk permissions unless there is a clear adoption record:
+Avoid adding further high-risk permissions unless there is a clear adoption record:
 
-- `debugger`
 - broad host permissions
 - persistent storage of raw network data
 - remote MCP/tool access

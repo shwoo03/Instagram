@@ -18,6 +18,8 @@ The current practical goal is to collect both lists reliably enough to answer:
 
 - `manifest.json`: Manifest V3 extension definition.
 - `background.js`: extension action handler and message relay.
+- `debugger-capture.js`: local run-scoped automatic CDP Network controller.
+- `network-payload-parser.js`: sanitized response classification and username extraction.
 - `main.js`: injected Instagram page collector and result printer.
 - `devtools.html`: DevTools extension entrypoint.
 - `devtools.js`: optional DevTools Network response username extractor.
@@ -32,7 +34,8 @@ The current practical goal is to collect both lists reliably enough to answer:
 
 The collector should combine multiple signals instead of trusting one source:
 
-- DevTools Network capture when DevTools is open.
+- Existing DevTools Network capture when DevTools is already open.
+- Otherwise, run-scoped automatic `chrome.debugger` Network capture.
 - Page-level XHR/fetch hooks from `main.js`.
 - DOM modal scrolling and profile-link extraction.
 - Expected count parsing from visible Instagram labels.

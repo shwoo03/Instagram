@@ -28,15 +28,16 @@ affect this Chrome extension.
 ### DevTools Network capture
 
 - Decision: use `chrome.devtools.network` when DevTools is open.
-- Why: it can read response bodies through `request.getContent()` without adding the high-risk `debugger` permission.
+- Why: it can read response bodies through `request.getContent()` and remains the preferred path when DevTools is already open.
 - Boundaries: extract usernames, discard raw bodies, relay only sanitized usernames and metadata.
 - Status: adopted.
 
 ### Debugger permission
 
-- Decision: do not add `debugger` permission by default.
-- Why: it is powerful, user-visible, and unnecessary while the current workflow already asks the operator to keep DevTools open.
-- Status: rejected by default; reconsider only with a specific adoption record.
+- Decision: adopt `debugger` for this local-only build after explicit operator approval.
+- Why: it provides exact response-body evidence without requiring the operator to open DevTools. It is limited to a user-started run, skips busy targets, and detaches at every terminal boundary.
+- Boundaries: Network domain only; bounded bodies; sanitized derived usernames/pagination only; no raw payload, headers, cookies, tokens, query strings, DMs, request generation, target stealing, or auto-reattach.
+- Status: adopted on 2026-08-25; not a recommendation for public-store distribution.
 
 ## 2026-06-07 Accuracy Research Addendum
 
@@ -72,9 +73,9 @@ affect this Chrome extension.
 ### chrome.debugger
 
 - URL: https://developer.chrome.com/docs/extensions/reference/api/debugger
-- Use for: evaluating CDP-based capture as a possible future fallback.
-- Decision: do not add by default because the permission is powerful and unnecessary while DevTools capture is operator-approved.
-- Status: rejected by default.
+- Use for: run-scoped CDP Network response capture when the existing DevTools bridge is not fresh.
+- Decision: adopt for the explicitly local-only workflow. Use protocol version 1.3, Chrome 118+, bounded Network buffers, exact endpoint/list-container trust gates, and explicit detach cleanup.
+- Status: adopted on 2026-08-25 with deterministic fixtures; real Instagram Chrome validation remains pending.
 
 ### Web UI flakiness research
 

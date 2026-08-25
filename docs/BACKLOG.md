@@ -27,6 +27,15 @@
 - Kit/starter-kit improvements live in `dogfood/`.
 - Do not put secrets, raw payloads, cookies, or account-sensitive dumps in backlog entries.
 
+## 2026-08-25 Automatic Debugger Capture
+
+- Done: adopt local-only `chrome.debugger` capture when DevTools is not already fresh.
+- Done: share the sanitized endpoint/body/list parser with the existing DevTools path.
+- Done: bind evidence to tab/run/profile/capture session, skip busy targets, and detach without auto-reattach.
+- Done: treat exact debugger evidence as strict and broad responses as candidate-only.
+- Done: pass `npm test` and all six synthetic `npm run e2e` scenarios.
+- Open: manual unpacked-extension validation against real Instagram for exact capture, DevTools skip/handoff, user stop, navigation cleanup, and stored-data inspection.
+
 ## 2026-06-06 Harness Stabilization Backlog
 
 - Done: add runtime DevTools preflight and page-network auto-assist before list collection.

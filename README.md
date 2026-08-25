@@ -21,6 +21,8 @@ which diff fields may contain false positives.
 
 - `manifest.json`: Manifest V3 extension definition.
 - `background.js`: action click handler and DevTools-to-page message relay.
+- `debugger-capture.js`: run-scoped automatic CDP Network capture controller.
+- `network-payload-parser.js`: shared privacy-preserving Instagram response parser.
 - `accuracy-engine.js`: canonical count, completion, trust, and strict/assisted comparison rules.
 - `main.js`: injected page collector, modal scroller, result comparer, and Korean console reporter.
 - `popup.html`: local start/progress/result popup shown from the extension icon.
@@ -36,11 +38,11 @@ which diff fields may contain false positives.
 
 Use layered collection because Instagram DOM and network behavior are unstable:
 
-1. DevTools Network capture when DevTools is open.
-2. Optional page-network bridge evidence.
-3. DOM modal scrolling and profile-link extraction.
-4. Expected count parsing from visible Instagram labels.
-5. Diagnostics when collected counts differ from expected counts.
+1. Existing DevTools Network capture when DevTools is already open.
+2. Otherwise, run-scoped automatic `chrome.debugger` Network capture.
+3. Optional page-network bridge evidence.
+4. DOM modal scrolling and profile-link extraction.
+5. Expected count parsing and diagnostics.
 
 ## Local Validation
 
@@ -67,16 +69,16 @@ Manual Chrome check:
 
 1. Reload the unpacked extension from `chrome://extensions`.
 2. Reload the Instagram profile tab.
-3. Open Chrome DevTools before opening followers/following lists.
-4. Click the extension icon and press **비교 시작**.
+3. Click the extension icon and press **비교 시작**. DevTools는 선택 사항입니다.
+4. Chrome의 디버깅 알림 표시줄이 보일 수 있으며, 실행이 끝나면 자동 캡처가 분리됩니다.
 5. Confirm the popup shows live collection status.
 6. In DevTools, open the **IG Comparator** panel for detailed evidence status.
-7. Review the Korean verdict: `확정 비교 가능`, `참고용 결과`, `부분 결과`, or `DevTools 재실행 필요`.
+7. Review the Korean verdict: `확정 비교 가능`, `참고용 결과`, `부분 결과`, or `네트워크 수집 재실행 필요`.
 
 ## Operating Rules
 
 - Keep DevTools Network capture optional.
-- Keep extension permissions minimal.
+- The local-only build intentionally uses the powerful `debugger` permission only during an active run.
 - Do not store secrets, cookies, auth headers, private messages, or raw API payload archives.
 - Relay only derived usernames, source/provenance, counts, timestamps, and diagnostics.
 - Keep project-specific bugs in `docs/BACKLOG.md`.

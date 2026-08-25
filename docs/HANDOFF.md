@@ -203,3 +203,13 @@ Remaining list-end accuracy manual checklist:
 - Pre-change real Chrome baseline was confirmed at DevTools exact 283/283, strict mutual 283, diff 0/0. Post-change real Instagram validation remains pending because the connected Chrome controller cannot operate the `chrome://extensions` internal reload button.
 
 Next operator action: open `chrome://extensions`, reload the unpacked extension once, reload the Instagram profile tab, reopen DevTools, then start from the popup and confirm the final popup/panel verdict.
+
+## 2026-08-25 Local Automatic Debugger Capture
+
+- Manifest is now v1.3.0, requires Chrome 118+, and intentionally includes `debugger` for this local-only installation.
+- A popup-started run uses an already-fresh DevTools bridge first; otherwise it attaches a bounded CDP Network session before collector injection.
+- Exact followers/following responses become strict `Debugger` evidence. Broad response candidates remain excluded from final diff.
+- The controller never steals a busy target, never creates Instagram requests, never auto-reattaches, and detaches on completion/failure/navigation/tab close/cancellation.
+- Raw response bodies are parsed transiently and discarded. Messages/storage contain only derived usernames, fixed endpoint labels, counts, timestamps, pagination, source mode, and diagnostics.
+- Validation passed: `npm test`, `npm run e2e` (all six scenarios), and `git diff --check` before final commit preparation.
+- Mock fixtures and Puppeteer fallback do not prove real Chrome debugger capture. Remaining manual validation: reload the unpacked extension, run with DevTools closed, verify the Chrome debugging banner and exact counts, then test DevTools-already-open skip, mid-run handoff, stop/detach, navigation cleanup, and session-storage privacy.
