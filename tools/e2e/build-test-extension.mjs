@@ -10,6 +10,7 @@ const FILES = [
   'account-list-contract.js',
   'account-list-ui.js',
   'account-list-ui.css',
+  'run-context.js',
   'network-payload-parser.js',
   'debugger-capture.js',
   'main.js',

@@ -234,3 +234,15 @@ Next operator action: open `chrome://extensions`, reload the unpacked extension 
 - Validation passed: `npm test`; all six `npm run e2e` scenarios including DOM-reference and DevTools-strict evidence assertions; `npm run ui:e2e` at popup 320/360/420 and panel 320/736/1024; visual inspection of the 320px expanded reason; and `git diff --check`.
 - Partial-side recollection/recovery was explicitly removed from this change at the user's request.
 - Remaining manual check: reload the unpacked extension, reload the Instagram profile, run one comparison, then open popup and DevTools account lists and confirm the badge source/reason matches the observed collection mode.
+
+## 2026-08-25 Run Context and Stale-profile Guard
+
+- Manifest is now v1.6.0.
+- Added the pure `run-context.js` contract for profile normalization, Instagram profile URL parsing, profile mismatch checks, and Korean relative-time labels.
+- Popup and DevTools panel now retain the sanitized `profile` already present in the session progress record and display `@profile` plus the last-update age.
+- If a stored run belongs to another profile, the UI shows `이전 결과`, names both saved/current profiles in the warning, and suppresses old counts, account lists, diagnostics, warnings, timeline, and diagnostic copying.
+- The popup still allows `현재 프로필 비교 시작`; the DevTools panel rechecks `location.href` on panel load and `chrome.devtools.network.onNavigated`.
+- Reserved Instagram paths such as `/explore/`, `/accounts/`, `/direct/`, `/reels/`, and `/p/` are not treated as profiles.
+- Fixed the UI number sanitizer so absent values render as `—` while a real zero still renders as `0`.
+- Validation passed: `npm test`, all six `npm run e2e` scenarios, `npm run ui:e2e` at popup 320/360/420 and panel 320/736/1024, normal/stale screenshots, and `git diff --check`.
+- Remaining manual check: after extension reload, complete a comparison on profile A, navigate the same tab to profile B, and confirm popup/panel suppress profile A results until profile B is run.

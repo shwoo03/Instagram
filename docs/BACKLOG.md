@@ -54,6 +54,16 @@
 - Deferred by user choice: partial-side recollection and recovery controls.
 - Open: reload v1.5.0 and confirm evidence badges/reasons against one real Instagram comparison.
 
+## 2026-08-25 Run Context and Stale-profile Guard
+
+- Done: preserve the sanitized run profile in popup and DevTools panel records and display it with a relative update age.
+- Done: derive the current Instagram profile from the active/inspected tab without accepting reserved non-profile paths.
+- Done: block old counts, account lists, diagnostics, and diagnostic copy when the stored run profile differs from the current profile.
+- Done: recheck the DevTools target on SPA navigation and keep the popup start action available for the current profile.
+- Done: distinguish missing counts from a real zero instead of coercing `null` to `0` in both UIs.
+- Done: pass pure run-context fixtures, all six collection E2E scenarios, and responsive normal/stale UI checks without horizontal overflow.
+- Open: reload v1.6.0, navigate between two real Instagram profiles in the same tab, and confirm the previous result is blocked until a new comparison starts.
+
 ## 2026-06-06 Harness Stabilization Backlog
 
 - Done: add runtime DevTools preflight and page-network auto-assist before list collection.

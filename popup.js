@@ -13,7 +13,7 @@
       "resultsSection", "integrityBadge", "followersCount", "followingCount", "mutualCount",
       "followingOnlyCount", "followersOnlyCount", "candidateCount", "warningSection",
       "warningList", "accountDetailsSection", "accountSetBadge", "accountDetailHost",
-      "liveStatus", "errorStatus"
+      "runContext", "runProfile", "runAge", "liveStatus", "errorStatus"
     ].map((id) => [id, document.getElementById(id)])
   );
 
@@ -21,6 +21,7 @@
     tabId: null,
     storageKey: null,
     validInstagramTab: false,
+    currentProfile: "",
     record: null,
     starting: false
   };
@@ -30,6 +31,7 @@
   }
 
   function safeNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
     const number = Number(value);
     return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
   }
@@ -56,6 +58,7 @@
     const verdict = isObject(record.verdict) ? record.verdict : {};
     const sources = isObject(record.sources) ? record.sources : {};
     return {
+      profile: globalThis.IGRunContext?.normalizeProfile(record.profile) || "",
       stage: typeof record.stage === "string" ? record.stage : "",
       status: typeof record.status === "string" ? record.status : "",
       updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
@@ -92,8 +95,10 @@
 
   function deriveState(record) {
     if (!ui.validInstagramTab) return "no-tab";
-    if (ui.starting || isRunning(record)) return "running";
+    if (ui.starting) return "running";
     if (!record || (!record.status && !record.verdict.code)) return "ready";
+    if (globalThis.IGRunContext?.hasProfileMismatch(record.profile, ui.currentProfile)) return "stale-profile";
+    if (isRunning(record)) return "running";
 
     const haystack = `${record.status} ${record.verdict.code} ${record.verdict.severity}`.toUpperCase();
     if (/ERROR|FAILED|RUNTIME_ERROR|STORAGE_ERROR/.test(haystack)) return "error";
@@ -128,6 +133,7 @@
       "no-tab": ["사용 불가", "danger", "Instagram 탭 필요", "Instagram 프로필을 열어 주세요", "현재 선택된 탭에서는 비교를 시작할 수 없습니다."],
       ready: ["실행 준비", "neutral", "프로필 준비됨", "비교를 시작할 수 있어요", "실행 중 자동 네트워크 캡처를 먼저 시도하고, 사용할 수 없으면 참고용 수집으로 계속합니다."],
       running: ["수집 중", "info", "목록 수집 진행 중", "잠시만 기다려 주세요", "현재 실행을 유지한 채 팔로워와 팔로잉 증거를 확인하고 있습니다."],
+      "stale-profile": ["이전 결과", "warning", "프로필 불일치", "다른 프로필의 결과입니다", `저장된 결과는 @${record?.profile || "알 수 없음"} 기준입니다. 현재 @${ui.currentProfile || "알 수 없음"}에서 다시 실행해 주세요.`],
       confirmed: ["확정", "success", "검증 완료", verdictLabel || "확정 비교 가능", action || "DevTools 네트워크 증거와 비교 무결성이 확인되었습니다."],
       reference: ["참고용", "info", "비교 완료", verdictLabel || "참고용 결과", action || "DOM 또는 보조 증거를 사용했습니다. 결과를 참고용으로 확인해 주세요."],
       partial: ["일부 완료", "warning", "부분 결과 보존됨", verdictLabel || "수집이 끝까지 완료되지 않았습니다", action || "확인된 데이터는 보존했습니다. 목록을 다시 연 뒤 재실행할 수 있습니다."],
@@ -141,6 +147,26 @@
     elements.statusKicker.textContent = kicker;
     elements.statusTitle.textContent = title;
     elements.statusDescription.textContent = description;
+  }
+
+  function renderRunContext(state, record) {
+    const savedProfile = ui.starting ? "" : record?.profile || "";
+    const displayProfile = savedProfile || ui.currentProfile;
+    const hasAge = !ui.starting && Boolean(record?.updatedAt);
+    elements.runContext.hidden = !displayProfile && !hasAge;
+    if (elements.runContext.hidden) return;
+    elements.runContext.dataset.tone = state === "stale-profile" ? "warning" : "neutral";
+    elements.runProfile.textContent = state === "stale-profile"
+      ? `이전 결과 @${savedProfile}`
+      : savedProfile ? `결과 @${savedProfile}` : `현재 @${ui.currentProfile}`;
+    elements.runAge.hidden = !hasAge;
+    elements.runAge.previousElementSibling.hidden = !hasAge;
+    if (hasAge) {
+      elements.runAge.dateTime = record.updatedAt;
+      elements.runAge.textContent = globalThis.IGRunContext?.formatRelativeTime(record.updatedAt) || "시각 알 수 없음";
+      const exactDate = new Date(record.updatedAt);
+      elements.runAge.title = Number.isNaN(exactDate.getTime()) ? "" : exactDate.toLocaleString("ko-KR");
+    }
   }
 
   function renderProgress(state, record) {
@@ -162,7 +188,13 @@
     else track.setAttribute("aria-valuetext", `${current}명 중 ${expected}명`);
   }
 
-  function renderConnection(record) {
+  function renderConnection(record, state) {
+    if (state === "stale-profile") {
+      elements.connectionDot.dataset.connected = "false";
+      elements.connectionLabel.textContent = "현재 프로필에서 다시 확인 필요";
+      elements.connectionDescription.textContent = "이전 프로필의 수집 환경과 결과는 현재 프로필에 적용하지 않습니다.";
+      return;
+    }
     const debuggerConnected = record?.sources.debuggerReady === true;
     const debuggerEvidence = record?.sources.debuggerEvidence === true;
     const devtoolsConnected = record?.sources.devtoolsReady === true;
@@ -204,6 +236,11 @@
   }
 
   function renderWarnings(record, state) {
+    if (state === "stale-profile") {
+      elements.warningSection.hidden = true;
+      elements.warningList.replaceChildren();
+      return;
+    }
     const warnings = [...(record?.warnings || [])];
     if (record?.verdict.recommendedActionKo && ["partial", "retry", "error"].includes(state)) {
       warnings.unshift(record.verdict.recommendedActionKo);
@@ -237,15 +274,16 @@
     elements.startButton.disabled = !runnable;
     elements.startButtonLabel.textContent = ["confirmed", "reference", "partial", "retry", "error", "superseded"].includes(state)
       ? "비교 다시 실행"
-      : state === "running" ? "비교 진행 중" : "비교 시작";
+      : state === "stale-profile" ? "현재 프로필 비교 시작" : state === "running" ? "비교 진행 중" : "비교 시작";
   }
 
   function render(rawRecord = ui.record) {
     const record = rawRecord ? normalizeRecord(rawRecord) : null;
     const state = deriveState(record);
     setStatusView(state, record);
+    renderRunContext(state, record);
     renderProgress(state, record);
-    renderConnection(record);
+    renderConnection(record, state);
     renderResults(state, record);
     renderAccountDetails(record, state);
     renderWarnings(record, state);
@@ -274,7 +312,8 @@
 
     const tab = tabs?.[0];
     ui.tabId = Number.isInteger(tab?.id) ? tab.id : null;
-    ui.validInstagramTab = ui.tabId !== null && isInstagramUrl(tab?.url || "");
+    ui.currentProfile = globalThis.IGRunContext?.profileFromInstagramUrl(tab?.url || "") || "";
+    ui.validInstagramTab = ui.tabId !== null && isInstagramUrl(tab?.url || "") && Boolean(ui.currentProfile);
     ui.storageKey = ui.tabId === null ? null : `${STORAGE_PREFIX}${ui.tabId}`;
 
     if (!ui.storageKey) {

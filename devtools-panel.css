@@ -310,6 +310,17 @@ button:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.verdict-meta span:not(:first-child) {
+  margin-top: 9px;
+}
+
+#runProfile {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dashboard-section {
   padding: 16px;
 }

@@ -10,6 +10,7 @@ const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (fs.existsSync(m
 const onlyUsers = Array.from({ length: 25 }, (_, index) => `only_${String(index).padStart(2, '0')}`);
 const record = {
   schemaVersion: 1,
+  profile: 'test_profile',
   status: 'completed',
   stage: 'finished',
   updatedAt: new Date().toISOString(),
@@ -79,7 +80,7 @@ try {
         },
         runtime: { sendMessage: async () => ({ ok: true }) },
         devtools: isPanel
-          ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback('www.instagram.com', null) } }
+          ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback('https://www.instagram.com/test_profile/', null) } }
           : undefined
       };
     }, record, testCase.panel);
@@ -91,11 +92,15 @@ try {
       detailsCount: document.querySelectorAll('#accountDetailHost details').length,
       openCount: document.querySelectorAll('#accountDetailHost details[open]').length,
       badge: document.querySelector('#accountSetBadge')?.textContent,
+      runProfile: document.querySelector('#runProfile')?.textContent,
+      runAge: document.querySelector('#runAge, #updatedAt')?.textContent,
       overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth || document.body.scrollWidth > document.body.clientWidth
     }));
     assert.equal(defaultState.detailsCount, 3, `${testCase.file} must render three disclosures`);
     assert.equal(defaultState.openCount, 0, `${testCase.file} disclosures must default closed`);
     assert.equal(defaultState.badge, '확정 집합');
+    assert.equal(defaultState.runProfile, testCase.panel ? '@test_profile' : '결과 @test_profile');
+    assert.notEqual(defaultState.runAge, '—');
     assert.equal(defaultState.overflow, false, `${testCase.file} ${testCase.width}px must not overflow`);
     const closedScreenshot = `/tmp/ig-account-lists-${testCase.file.replace('.html', '')}-${testCase.width}-closed.png`;
     await page.screenshot({ path: closedScreenshot, fullPage: true });
@@ -141,6 +146,50 @@ try {
     const openScreenshot = `/tmp/ig-account-lists-${testCase.file.replace('.html', '')}-${testCase.width}-open.png`;
     await page.screenshot({ path: openScreenshot, fullPage: true });
     results.push({ ...testCase, closedScreenshot, evidenceScreenshot, openScreenshot, ...layout });
+    await page.close();
+  }
+
+  for (const testCase of [
+    { file: 'popup.html', width: 320, panel: false },
+    { file: 'devtools-panel.html', width: 736, panel: true }
+  ]) {
+    const page = await browser.newPage();
+    await page.setViewport({ width: testCase.width, height: 900 });
+    await page.evaluateOnNewDocument((storedRecord, isPanel) => {
+      globalThis.chrome = {
+        tabs: { query: async () => [{ id: 7, url: 'https://www.instagram.com/current_profile/' }] },
+        storage: {
+          session: { get: async (key) => ({ [key]: { ...storedRecord, profile: 'old_profile' } }) },
+          onChanged: { addListener() {} }
+        },
+        runtime: { sendMessage: async () => ({ ok: true }) },
+        devtools: isPanel
+          ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback('https://www.instagram.com/current_profile/', null) } }
+          : undefined
+      };
+    }, record, testCase.panel);
+
+    await page.goto(`file://${path.join(ROOT, testCase.file)}`, { waitUntil: 'load' });
+    await page.waitForFunction(() => document.querySelector('#stateBadge')?.textContent === '이전 결과');
+    const staleState = await page.evaluate((isPanel) => ({
+      title: document.querySelector(isPanel ? '#verdictTitle' : '#statusTitle')?.textContent,
+      accountDetailsHidden: document.querySelector('#accountDetailsSection')?.hidden,
+      resultsHidden: isPanel ? document.querySelector('#copyButton')?.disabled : document.querySelector('#resultsSection')?.hidden,
+      mutualCount: document.querySelector('#mutualCount')?.textContent,
+      runProfile: document.querySelector('#runProfile')?.textContent,
+      warningText: document.querySelector('#warningList')?.textContent,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth || document.body.scrollWidth > document.body.clientWidth
+    }), testCase.panel);
+    assert.equal(staleState.title, '다른 프로필의 결과입니다');
+    assert.equal(staleState.accountDetailsHidden, true);
+    assert.equal(staleState.resultsHidden, true);
+    if (testCase.panel) assert.equal(staleState.mutualCount, '—');
+    if (testCase.panel) assert.match(staleState.warningText, /current_profile/);
+    assert.match(staleState.runProfile, /old_profile/);
+    assert.equal(staleState.overflow, false);
+    const staleScreenshot = `/tmp/ig-run-context-${testCase.file.replace('.html', '')}-${testCase.width}-stale.png`;
+    await page.screenshot({ path: staleScreenshot, fullPage: true });
+    results.push({ ...testCase, state: 'stale-profile', staleScreenshot });
     await page.close();
   }
 } finally {

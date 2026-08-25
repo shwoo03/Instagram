@@ -28,6 +28,11 @@
         </div>
       </div>
       <p id="statusDescription" class="status-description">Instagram 프로필과 저장된 실행 상태를 확인하고 있습니다.</p>
+      <p id="runContext" class="run-context" data-tone="neutral" hidden>
+        <strong id="runProfile">프로필 확인 중</strong>
+        <span aria-hidden="true">·</span>
+        <time id="runAge">시각 확인 중</time>
+      </p>
 
       <div id="progressRegion" class="progress-region" hidden>
         <div class="progress-meta">
@@ -131,6 +136,7 @@
   </main>
   <script src="account-list-contract.js"></script>
   <script src="account-list-ui.js"></script>
+  <script src="run-context.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

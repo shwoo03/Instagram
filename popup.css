@@ -272,6 +272,40 @@ input {
   overflow-wrap: anywhere;
 }
 
+.run-context {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 10px 0 0;
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.run-context strong {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.run-context time {
+  font-variant-numeric: tabular-nums;
+}
+
+.run-context[data-tone="warning"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.run-context[data-tone="warning"] strong {
+  color: var(--warning);
+}
+
 .progress-region {
   margin-top: 16px;
 }

@@ -14,7 +14,7 @@
 
   const elementIds = [
     "stateBadge", "copyButton", "verdictIcon", "verdictKicker", "verdictTitle",
-    "verdictDescription", "updatedAt", "integrityBadge", "followersHeadline",
+    "verdictDescription", "runProfile", "updatedAt", "integrityBadge", "followersHeadline",
     "followersExpected", "followersConfirmed", "followersAssisted", "followersCandidates",
     "followersPagination", "followingHeadline", "followingExpected", "followingConfirmed",
     "followingAssisted", "followingCandidates", "followingPagination", "mutualCount",
@@ -31,12 +31,14 @@
   const storageKey = inspectedTabId === null ? null : `${STORAGE_PREFIX}${inspectedTabId}`;
   let rawRecord = null;
   let validInstagramTarget = true;
+  let currentProfile = "";
 
   function isObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
 
   function safeNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
     const number = Number(value);
     return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
   }
@@ -84,6 +86,7 @@
     const verdict = isObject(record.verdict) ? record.verdict : {};
     return {
       schemaVersion: safeNumber(record.schemaVersion) || 1,
+      profile: globalThis.IGRunContext?.normalizeProfile(record.profile) || "",
       stage: typeof record.stage === "string" ? record.stage : "",
       status: typeof record.status === "string" ? record.status : "",
       updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
@@ -126,6 +129,7 @@
   function deriveState(record) {
     if (!validInstagramTarget) return "no-tab";
     if (!record || (!record.status && !record.verdict.code)) return "ready";
+    if (globalThis.IGRunContext?.hasProfileMismatch(record.profile, currentProfile)) return "stale-profile";
     if (isRunning(record)) return "running";
     const haystack = `${record.status} ${record.verdict.code} ${record.verdict.severity}`.toUpperCase();
     if (/ERROR|FAILED|RUNTIME_ERROR|STORAGE_ERROR/.test(haystack)) return "error";
@@ -155,6 +159,7 @@
       "no-tab": ["Instagram 대상 아님", "danger", "대상 탭 확인 필요", "Instagram 프로필 탭을 검사해 주세요", "이 패널은 Instagram 프로필 비교 상태만 표시합니다."],
       ready: ["실행 대기", "neutral", "수집 준비됨", "비교 실행을 기다리고 있습니다", "확장 팝업에서 비교를 시작하면 근거와 진행 상태가 표시됩니다."],
       running: ["수집 중", "info", "실행 진행 중", "목록 증거를 수집하고 있습니다", "탭을 유지한 채 팔로워와 팔로잉 수집이 끝날 때까지 기다려 주세요."],
+      "stale-profile": ["이전 결과", "warning", "프로필 불일치", "다른 프로필의 결과입니다", `저장된 결과는 @${record?.profile || "알 수 없음"} 기준입니다. 현재 @${currentProfile || "알 수 없음"}의 비교 결과로 사용하지 않습니다.`],
       confirmed: ["확정", "success", "검증 완료", record?.verdict.labelKo || "확정 비교 가능", record?.verdict.recommendedActionKo || "정확한 네트워크 증거와 비교 무결성이 확인되었습니다."],
       reference: ["참고용", "info", "보조 증거 사용", record?.verdict.labelKo || "참고용 결과", record?.verdict.recommendedActionKo || "확정 네트워크 증거가 부족해 결과 신뢰도를 낮췄습니다."],
       partial: ["일부 완료", "warning", "부분 결과 보존", record?.verdict.labelKo || "수집이 일부만 완료되었습니다", record?.verdict.recommendedActionKo || "확인된 데이터는 보존했습니다. 종료 이유를 확인해 주세요."],
@@ -169,7 +174,11 @@
     elements.verdictKicker.textContent = kicker;
     elements.verdictTitle.textContent = title;
     elements.verdictDescription.textContent = description;
-    elements.updatedAt.textContent = formatTime(record?.updatedAt);
+    elements.runProfile.textContent = record?.profile ? `@${record.profile}` : currentProfile ? `@${currentProfile}` : "—";
+    elements.runProfile.title = state === "stale-profile" ? `현재 프로필 @${currentProfile}` : "";
+    const relativeTime = record?.updatedAt ? globalThis.IGRunContext?.formatRelativeTime(record.updatedAt) : "";
+    elements.updatedAt.textContent = relativeTime || "—";
+    elements.updatedAt.title = formatTime(record?.updatedAt);
   }
 
   function renderList(prefix, list, pagination) {
@@ -219,7 +228,9 @@
   }
 
   function renderWarnings(record, state) {
-    const warnings = [...(record?.warnings || [])];
+    const warnings = state === "stale-profile"
+      ? [`현재 @${currentProfile || "알 수 없음"}에서 비교를 다시 실행해 주세요.`]
+      : [...(record?.warnings || [])];
     if (record?.verdict.recommendedActionKo && ["partial", "retry", "error"].includes(state)) {
       warnings.unshift(record.verdict.recommendedActionKo);
     }
@@ -302,12 +313,13 @@
     const record = rawRecord ? normalizeRecord(rawRecord) : null;
     const state = deriveState(record);
     renderVerdict(state, record);
-    renderCounts(state, record);
-    renderAccountDetails(record, state);
-    renderDiagnostics(record);
-    renderWarnings(record, state);
-    renderTimeline(record);
-    elements.copyButton.disabled = !record;
+    const visibleRecord = state === "stale-profile" ? null : record;
+    renderCounts(state, visibleRecord);
+    renderAccountDetails(visibleRecord, state);
+    renderDiagnostics(visibleRecord);
+    renderWarnings(visibleRecord, state);
+    renderTimeline(visibleRecord);
+    elements.copyButton.disabled = !visibleRecord;
   }
 
   function privacySafeDiagnostic(record) {
@@ -345,10 +357,15 @@
 
   function inspectTarget() {
     if (!chrome.devtools?.inspectedWindow?.eval) return;
-    chrome.devtools.inspectedWindow.eval("location.hostname", (hostname, exceptionInfo) => {
-      if (exceptionInfo?.isException) return;
-      const normalized = typeof hostname === "string" ? hostname.toLowerCase() : "";
-      validInstagramTarget = normalized === "instagram.com" || normalized === "www.instagram.com";
+    chrome.devtools.inspectedWindow.eval("location.href", (href, exceptionInfo) => {
+      if (exceptionInfo?.isException) {
+        validInstagramTarget = false;
+        currentProfile = "";
+        render();
+        return;
+      }
+      currentProfile = globalThis.IGRunContext?.profileFromInstagramUrl(typeof href === "string" ? href : "") || "";
+      validInstagramTarget = Boolean(currentProfile);
       render();
     });
   }
@@ -381,6 +398,7 @@
   });
 
   elements.copyButton.addEventListener("click", copyDiagnostic);
+  chrome.devtools?.network?.onNavigated?.addListener(() => inspectTarget());
   inspectTarget();
   readInitialState();
 })();
