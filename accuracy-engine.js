@@ -279,6 +279,8 @@
     function classifyEvidence(input = {}) {
         const devtoolsExactPayloadCount = finiteNonNegativeInteger(input.devtoolsExactPayloadCount ?? input.devtoolsConfirmedPayloadCount);
         const devtoolsCandidatePayloadCount = finiteNonNegativeInteger(input.devtoolsCandidatePayloadCount);
+        const debuggerExactPayloadCount = finiteNonNegativeInteger(input.debuggerExactPayloadCount ?? input.debuggerConfirmedPayloadCount);
+        const debuggerCandidatePayloadCount = finiteNonNegativeInteger(input.debuggerCandidatePayloadCount);
         const pageNetworkExactPayloadCount = finiteNonNegativeInteger(input.pageNetworkExactPayloadCount ?? input.pageNetworkConfirmedPayloadCount);
         const pageNetworkCandidatePayloadCount = finiteNonNegativeInteger(input.pageNetworkCandidatePayloadCount);
         const domEvidenceCount = finiteNonNegativeInteger(input.domEvidenceCount ?? input.domCount);
@@ -286,10 +288,16 @@
 
         if (devtoolsExactPayloadCount > 0 || input.hasDevtoolsExactEvidence === true) {
             code = "DEVTOOLS_EXACT";
+        } else if (debuggerExactPayloadCount > 0 || input.hasDebuggerExactEvidence === true) {
+            code = "DEBUGGER_EXACT";
         } else if (devtoolsCandidatePayloadCount > 0) {
             code = "DEVTOOLS_CANDIDATES_ONLY";
+        } else if (debuggerCandidatePayloadCount > 0) {
+            code = "DEBUGGER_CANDIDATES_ONLY";
         } else if (input.devtoolsConnected === true) {
             code = "DEVTOOLS_CONNECTED_NO_PAYLOAD";
+        } else if (input.debuggerConnected === true) {
+            code = "DEBUGGER_CONNECTED_NO_PAYLOAD";
         } else if (pageNetworkExactPayloadCount > 0 || input.hasPageNetworkEvidence === true) {
             code = "PAGE_NETWORK_ASSISTED";
         } else if (pageNetworkCandidatePayloadCount > 0) {
@@ -300,11 +308,14 @@
 
         return deepFreeze({
             code,
-            strictEligible: code === "DEVTOOLS_EXACT",
+            strictEligible: code === "DEVTOOLS_EXACT" || code === "DEBUGGER_EXACT",
             assistedEligible: code === "PAGE_NETWORK_ASSISTED" || code === "DOM_PREVIEW",
             devtoolsConnected: input.devtoolsConnected === true,
             devtoolsExactPayloadCount,
             devtoolsCandidatePayloadCount,
+            debuggerConnected: input.debuggerConnected === true,
+            debuggerExactPayloadCount,
+            debuggerCandidatePayloadCount,
             pageNetworkExactPayloadCount,
             pageNetworkCandidatePayloadCount,
             domEvidenceCount
@@ -350,7 +361,7 @@
         const fallbackBlockReasons = [];
 
         if (!expected.exact) fallbackBlockReasons.push("expected_count_not_exact");
-        if (!evidence.strictEligible) fallbackBlockReasons.push("no_confirmed_devtools_evidence");
+        if (!evidence.strictEligible) fallbackBlockReasons.push("no_confirmed_cdp_evidence");
         if (gap === null || gap <= 0) fallbackBlockReasons.push("no_missing_count_gap");
         for (const reason of unsafeReasons) fallbackBlockReasons.push(`unsafe_end_reason:${reason}`);
         if (correctlyIdentifiedDomCandidateCount <= 0) fallbackBlockReasons.push("modal_not_identified");
@@ -367,12 +378,17 @@
         if (input.integrityOk === false) {
             state = "RETRY_REQUIRED";
             reasons.push("integrity_failed");
-        } else if (evidence.code === "DEVTOOLS_CONNECTED_NO_PAYLOAD" || evidence.code === "DEVTOOLS_CANDIDATES_ONLY") {
+        } else if ([
+            "DEVTOOLS_CONNECTED_NO_PAYLOAD",
+            "DEVTOOLS_CANDIDATES_ONLY",
+            "DEBUGGER_CONNECTED_NO_PAYLOAD",
+            "DEBUGGER_CANDIDATES_ONLY"
+        ].includes(evidence.code)) {
             state = "RETRY_REQUIRED";
-            reasons.push("devtools_connected_no_exact_payload");
+            reasons.push("cdp_connected_no_exact_payload");
         } else if (evidence.strictEligible && expected.exact && gap === 0) {
             state = "CONFIRMED_EXACT_COUNT";
-            reasons.push("exact_displayed_count_matches_devtools");
+            reasons.push("exact_displayed_count_matches_cdp");
         } else if (
             evidence.strictEligible &&
             expected.exact &&
@@ -381,7 +397,7 @@
             domEndObserved && nonDomCandidateCount === 0 && unsafeReasons.length === 0
         ) {
             state = "CONFIRMED_NETWORK_END";
-            reasons.push("devtools_pagination_terminal", "dom_list_end_observed", "small_gap_within_tolerance");
+            reasons.push("cdp_pagination_terminal", "dom_list_end_observed", "small_gap_within_tolerance");
         } else if (!evidence.strictEligible && unsafeReasons.length === 0) {
             const exactAssistedMatch = expected.exact && assistedGap === 0 && assistedTotalCount > 0;
             const endedAssistedRun = domEndObserved && (assistedTotalCount > 0 || evidence.pageNetworkExactPayloadCount > 0);
@@ -453,7 +469,7 @@
             REFERENCE_ONLY: {
                 labelKo: "참고용 결과",
                 severity: "info",
-                recommendedActionKo: "정확한 비교가 필요하면 DevTools를 연 뒤 다시 실행하세요."
+                recommendedActionKo: "정확한 비교가 필요하면 Instagram 탭을 새로고침한 뒤 다시 실행하세요."
             },
             PARTIAL: {
                 labelKo: "부분 결과",
@@ -461,9 +477,9 @@
                 recommendedActionKo: "완료되지 않은 목록의 종료 원인을 확인한 뒤 다시 실행하세요."
             },
             RETRY_REQUIRED: {
-                labelKo: "DevTools 재실행 필요",
+                labelKo: "네트워크 수집 재실행 필요",
                 severity: "error",
-                recommendedActionKo: "DevTools를 연 상태에서 Instagram 탭을 새로고침한 뒤 다시 실행하세요."
+                recommendedActionKo: "Instagram 탭을 새로고침한 뒤 다시 실행하세요. 계속 실패하면 DevTools를 연 상태에서 재시도하세요."
             }
         }[code];
 

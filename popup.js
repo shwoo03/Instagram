@@ -67,6 +67,8 @@
       },
       sources: {
         devtoolsReady: sources.devtoolsReady === true,
+        debuggerReady: sources.debuggerReady === true,
+        debuggerEvidence: sources.debuggerEvidence === true,
         pageNetworkReady: sources.pageNetworkReady === true,
         domOnly: sources.domOnly === true
       },
@@ -98,7 +100,7 @@
     if (/PARTIAL|INCOMPLETE/.test(haystack)) return "partial";
     if (/\bCONFIRMED\b|CONFIRMED_EXACT_COUNT|CONFIRMED_NETWORK_END|CONFIRMED_COMPLETE/.test(haystack)) return "confirmed";
     if (/ASSISTED|REFERENCE|DOM_PREVIEW|PROVISIONAL/.test(haystack)) return "reference";
-    if (/COMPLETE|COMPLETED|DONE/.test(haystack)) return record.sources.devtoolsReady ? "confirmed" : "reference";
+    if (/COMPLETE|COMPLETED|DONE/.test(haystack)) return (record.sources.devtoolsReady || record.sources.debuggerReady || record.sources.debuggerEvidence) ? "confirmed" : "reference";
     return "ready";
   }
 
@@ -122,7 +124,7 @@
     const action = record?.verdict.recommendedActionKo;
     const views = {
       "no-tab": ["사용 불가", "danger", "Instagram 탭 필요", "Instagram 프로필을 열어 주세요", "현재 선택된 탭에서는 비교를 시작할 수 없습니다."],
-      ready: ["실행 준비", "neutral", "프로필 준비됨", "비교를 시작할 수 있어요", record?.sources.devtoolsReady ? "DevTools 증거를 우선 사용해 정확하게 비교합니다." : "DevTools 없이도 실행되지만 결과는 참고용으로 표시될 수 있습니다."],
+      ready: ["실행 준비", "neutral", "프로필 준비됨", "비교를 시작할 수 있어요", "실행 중 자동 네트워크 캡처를 먼저 시도하고, 사용할 수 없으면 참고용 수집으로 계속합니다."],
       running: ["수집 중", "info", "목록 수집 진행 중", "잠시만 기다려 주세요", "현재 실행을 유지한 채 팔로워와 팔로잉 증거를 확인하고 있습니다."],
       confirmed: ["확정", "success", "검증 완료", verdictLabel || "확정 비교 가능", action || "DevTools 네트워크 증거와 비교 무결성이 확인되었습니다."],
       reference: ["참고용", "info", "비교 완료", verdictLabel || "참고용 결과", action || "DOM 또는 보조 증거를 사용했습니다. 결과를 참고용으로 확인해 주세요."],
@@ -159,14 +161,22 @@
   }
 
   function renderConnection(record) {
-    const connected = record?.sources.devtoolsReady === true;
+    const debuggerConnected = record?.sources.debuggerReady === true;
+    const debuggerEvidence = record?.sources.debuggerEvidence === true;
+    const devtoolsConnected = record?.sources.devtoolsReady === true;
+    const connected = debuggerConnected || debuggerEvidence || devtoolsConnected;
     elements.connectionDot.dataset.connected = String(connected);
     if (connected) {
-      elements.connectionLabel.textContent = "DevTools 증거 사용 가능";
-      elements.connectionDescription.textContent = "정확한 목록 응답이 포착되면 확정 비교로 판정합니다.";
+      elements.connectionLabel.textContent = debuggerConnected
+        ? "자동 네트워크 캡처 연결됨"
+        : debuggerEvidence ? "자동 네트워크 증거 수집 완료" : "DevTools 증거 사용 가능";
+      elements.connectionDescription.textContent = debuggerConnected
+        ? "비교 실행 중에만 연결하며 종료되면 자동으로 분리합니다."
+        : debuggerEvidence ? "원본 응답은 버리고 파생된 확정 증거만 이번 결과에 반영했습니다."
+        : "정확한 목록 응답이 포착되면 확정 비교로 판정합니다.";
     } else {
       elements.connectionLabel.textContent = "DOM 참고용 수집 가능";
-      elements.connectionDescription.textContent = "DevTools가 닫혀 있어도 실행하며 신뢰도는 낮춰 표시합니다.";
+      elements.connectionDescription.textContent = "자동 캡처를 사용할 수 없어도 실행하며 신뢰도는 낮춰 표시합니다.";
     }
   }
 
@@ -272,6 +282,11 @@
     try {
       const response = await chrome.runtime.sendMessage({ type: "IG_START_COLLECTION", tabId: ui.tabId });
       if (response?.ok === false) throw new Error(response.error || "start-rejected");
+      if (response?.capture?.mode === "fallback") {
+        announce(response.capture.reason === "debugger-busy"
+          ? "다른 디버거가 탭을 사용 중이라 참고용 수집으로 계속합니다."
+          : "자동 네트워크 캡처를 사용할 수 없어 참고용 수집으로 계속합니다.");
+      }
     } catch {
       ui.starting = false;
       setStatusView("error", normalizeRecord({

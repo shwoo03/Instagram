@@ -111,6 +111,15 @@ assert.equal(engine.classifyEvidence({
   domEvidenceCount: 50
 }).code, 'PAGE_NETWORK_ASSISTED');
 assert.equal(engine.classifyEvidence({ domEvidenceCount: 50 }).code, 'DOM_PREVIEW');
+assert.equal(engine.classifyEvidence({
+  debuggerConnected: true,
+  debuggerExactPayloadCount: 1,
+  pageNetworkExactPayloadCount: 10
+}).code, 'DEBUGGER_EXACT');
+assert.equal(engine.classifyEvidence({
+  debuggerConnected: true,
+  debuggerCandidatePayloadCount: 1
+}).code, 'DEBUGGER_CANDIDATES_ONLY');
 
 const exactCount = engine.parseDisplayedCount({ text: '287', source: 'aria-label' });
 const exactCompletion = engine.assessListCompletion({
@@ -120,6 +129,15 @@ const exactCompletion = engine.assessListCompletion({
   devtoolsExactPayloadCount: 4
 });
 assert.equal(exactCompletion.state, 'CONFIRMED_EXACT_COUNT');
+
+const debuggerExactCompletion = engine.assessListCompletion({
+  expectedCount: exactCount,
+  confirmedCount: 287,
+  debuggerConnected: true,
+  debuggerExactPayloadCount: 4
+});
+assert.equal(debuggerExactCompletion.state, 'CONFIRMED_EXACT_COUNT');
+assert.equal(debuggerExactCompletion.evidence.strictEligible, true);
 
 const terminalSmallGap = engine.assessListCompletion({
   expectedCount: exactCount,
@@ -197,6 +215,24 @@ const devtoolsCandidatesOnly = engine.assessListCompletion({
   domEndObserved: true
 });
 assert.equal(devtoolsCandidatesOnly.state, 'RETRY_REQUIRED');
+
+const debuggerConnectedNoPayload = engine.assessListCompletion({
+  expectedCount: exactCount,
+  assistedTotalCount: 287,
+  domEvidenceCount: 287,
+  debuggerConnected: true,
+  domEndObserved: true
+});
+assert.equal(debuggerConnectedNoPayload.state, 'RETRY_REQUIRED');
+
+const debuggerCandidatesOnly = engine.assessListCompletion({
+  expectedCount: exactCount,
+  assistedTotalCount: 287,
+  debuggerConnected: true,
+  debuggerCandidatePayloadCount: 1,
+  domEndObserved: true
+});
+assert.equal(debuggerCandidatesOnly.state, 'RETRY_REQUIRED');
 
 for (const unsafeReason of [
   'rate_limited',

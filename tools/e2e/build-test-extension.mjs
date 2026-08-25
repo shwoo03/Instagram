@@ -7,6 +7,8 @@ const FILES = [
   'manifest.json',
   'background.js',
   'accuracy-engine.js',
+  'network-payload-parser.js',
+  'debugger-capture.js',
   'main.js',
   'devtools.js',
   'devtools.html',

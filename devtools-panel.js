@@ -18,7 +18,7 @@
     "followersExpected", "followersConfirmed", "followersAssisted", "followersCandidates",
     "followersPagination", "followingHeadline", "followingExpected", "followingConfirmed",
     "followingAssisted", "followingCandidates", "followingPagination", "mutualCount",
-    "followingOnlyCount", "followersOnlyCount", "devtoolsStatus", "pageNetworkStatus",
+    "followingOnlyCount", "followersOnlyCount", "devtoolsStatus", "debuggerStatus", "pageNetworkStatus",
     "domStatus", "stageStatus", "runStatus", "emptyWarnings", "warningList",
     "timelineList", "liveStatus", "errorStatus"
   ];
@@ -95,6 +95,8 @@
       },
       sources: {
         devtoolsReady: sources.devtoolsReady === true,
+        debuggerReady: sources.debuggerReady === true,
+        debuggerEvidence: sources.debuggerEvidence === true,
         pageNetworkReady: sources.pageNetworkReady === true,
         domOnly: sources.domOnly === true
       },
@@ -130,7 +132,7 @@
     if (/PARTIAL|INCOMPLETE/.test(haystack)) return "partial";
     if (/\bCONFIRMED\b|CONFIRMED_EXACT_COUNT|CONFIRMED_NETWORK_END|CONFIRMED_COMPLETE/.test(haystack)) return "confirmed";
     if (/ASSISTED|REFERENCE|DOM_PREVIEW|PROVISIONAL/.test(haystack)) return "reference";
-    if (/COMPLETE|COMPLETED|DONE/.test(haystack)) return record.sources.devtoolsReady ? "confirmed" : "reference";
+    if (/COMPLETE|COMPLETED|DONE/.test(haystack)) return (record.sources.devtoolsReady || record.sources.debuggerReady || record.sources.debuggerEvidence) ? "confirmed" : "reference";
     return "ready";
   }
 
@@ -202,6 +204,12 @@
   function renderDiagnostics(record) {
     const sources = record?.sources || normalizeRecord(null).sources;
     setSource(elements.devtoolsStatus, sources.devtoolsReady, "연결됨", "연결 대기");
+    setSource(
+      elements.debuggerStatus,
+      sources.debuggerReady || sources.debuggerEvidence,
+      sources.debuggerReady ? "자동 캡처 중" : "증거 수집 완료",
+      "비활성"
+    );
     setSource(elements.pageNetworkStatus, sources.pageNetworkReady, "보조 증거 있음", "비활성");
     setSource(elements.domStatus, sources.domOnly || Boolean(record), sources.domOnly ? "DOM 전용" : "증거 수집", record ? "대기" : "실행 전");
     elements.stageStatus.textContent = record?.stage || "—";

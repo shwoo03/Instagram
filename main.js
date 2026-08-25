@@ -35,7 +35,7 @@
     const RUN_PROGRESS_THROTTLE_MS = 750;
     const DOM_TIER_SOURCES = new Set(["DOM", "dom-observer"]);
     const DOM_CANDIDATE_SOURCES = new Set(["dom-candidate", "dom-observer-candidate"]);
-    const STRICT_NETWORK_SOURCES = new Set(["DevTools", "XHR", "fetch"]);
+    const STRICT_NETWORK_SOURCES = new Set(["DevTools", "Debugger", "XHR", "fetch"]);
 
     const FOLLOWER_BUTTON_XPATH = "//a[contains(@href, '/followers/')] | //span[contains(text(), '팔로워')] | //span[contains(text(), 'Followers')]";
     const FOLLOWING_BUTTON_XPATH = "//a[contains(@href, '/following/')] | //span[contains(text(), '팔로잉')] | //span[contains(text(), 'Following')] | //span[contains(normalize-space(.), '팔로우') and .//span]";
@@ -132,6 +132,7 @@
                 hasMore: null,
                 terminalReason: null,
                 exactPayloadCount: 0,
+                debuggerExactPayloadCount: 0,
                 pageNetworkExactPayloadCount: 0,
                 lastCapturedAt: null
             },
@@ -141,6 +142,7 @@
                 hasMore: null,
                 terminalReason: null,
                 exactPayloadCount: 0,
+                debuggerExactPayloadCount: 0,
                 pageNetworkExactPayloadCount: 0,
                 lastCapturedAt: null
             }
@@ -151,6 +153,25 @@
             listenerInstalledAt: null,
             ready: false,
             readyCount: 0,
+            statusCount: 0,
+            payloadCount: 0,
+            confirmedPayloadCount: 0,
+            candidatePayloadCount: 0,
+            addedCount: 0,
+            lastReadyAt: null,
+            lastStatusAt: null,
+            lastPayloadAt: null,
+            lastError: null,
+            lastStatus: null,
+            postRunIgnoredPayloadCount: 0,
+            postRunNoticeShown: false
+        },
+        debuggerBridge: {
+            ready: false,
+            attached: false,
+            captureSessionId: "",
+            runId: "",
+            profile: "unknown_profile",
             statusCount: 0,
             payloadCount: 0,
             confirmedPayloadCount: 0,
@@ -252,6 +273,8 @@
             },
             sources: {
                 devtoolsReady: isDevtoolsBridgeFresh(),
+                debuggerReady: isDebuggerBridgeReady(),
+                debuggerEvidence: state.debuggerBridge.confirmedPayloadCount > 0,
                 pageNetworkReady: Boolean(state.pageNetworkBridge.ready && state.pageNetworkBridge.enabled),
                 domOnly: !hasConfirmedNetworkEvidence("followers") && !hasConfirmedNetworkEvidence("following")
             },
@@ -374,6 +397,7 @@
         if (value === "xhr") return "XHR";
         if (value === "fetch") return "fetch";
         if (value === "devtools" || value === "devtools-network") return "DevTools";
+        if (value === "debugger" || value === "debugger-network") return "Debugger";
         if (value === "dom") return "DOM";
         return source || "unknown";
     }
@@ -492,6 +516,7 @@
         const counts = getSourceCounts(mode);
         return Boolean(
             (counts.DevTools || 0) > 0 ||
+            (counts.Debugger || 0) > 0 ||
             (counts.XHR || 0) > 0 ||
             (counts.fetch || 0) > 0 ||
             (counts["page-XHR"] || 0) > 0 ||
@@ -673,6 +698,7 @@
             followingCompletion: canonical.followingCompletion,
             sources: {
                 devtoolsBridge: getDevtoolsBridgeSnapshot(),
+                debuggerBridge: getDebuggerBridgeSnapshot(),
                 pageNetworkBridge: getPageNetworkBridgeSnapshot(),
                 dom: {
                     followersEndReason: state.lastFollowersScrollEndReason,
@@ -849,9 +875,9 @@
         console.log('4) followers/following 원본 목록 보기: window.__igFollowerPrintFullList?.("followers" | "following")');
         console.log("5) 실행 타임라인 보기: window.__igFollowerPrintTimeline?.()");
         console.log("6) 경고만 보기: window.__igFollowerPrintWarnings?.()");
-        console.log("7) DevTools 상태 보기: window.__igFollowerPrintDevToolsStatus?.()");
+        console.log("7) DevTools/자동 네트워크 상태 보기: window.__igFollowerPrintDevToolsStatus?.() / window.__igFollowerDebuggerStatus?.()");
         console.log("8) DevTools 없이 수동 page-network 보조 켜기: window.__igFollowerEnablePageNetworkBridge?.()");
-        console.log("판정 순서: DevTools 확정 payload > page-network 확정 payload > DOM_PREVIEW");
+        console.log("판정 순서: DevTools 또는 자동 debugger 확정 payload > page-network 확정 payload > DOM_PREVIEW");
     }
 
     function countSources(...sourceCountMaps) {
@@ -873,8 +899,25 @@
         return Date.now() - Math.max(...latest) <= DEVTOOLS_READY_STALE_MS;
     }
 
+    function isDebuggerBridgeReady() {
+        return state.debuggerBridge.ready === true &&
+            state.debuggerBridge.attached === true &&
+            state.debuggerBridge.captureSessionId !== "" &&
+            state.debuggerBridge.runId === state.runId &&
+            state.debuggerBridge.profile === state.runProfile;
+    }
+
+    function getDebuggerBridgeSnapshot() {
+        return {
+            ...state.debuggerBridge,
+            activeCollectionMode: state.activeCollectionMode,
+            bound: isDebuggerBridgeReady()
+        };
+    }
+
     function getAccuracyMode(summary = {}) {
         const bridge = getDevtoolsBridgeSnapshot();
+        const debuggerBridge = getDebuggerBridgeSnapshot();
         const sourceTotals = countSources(getSourceCounts("followers"), getSourceCounts("following"));
         const pageBridge = getPageNetworkBridgeSnapshot();
         const networkHookCount = (sourceTotals.XHR || 0) + (sourceTotals.fetch || 0) + (sourceTotals["XHR-candidate"] || 0) + (sourceTotals["fetch-candidate"] || 0) +
@@ -889,6 +932,10 @@
             status = "DEVTOOLS_ASSISTED";
             label = "DevTools 보조 검증 모드";
             recommendedAction = "DevTools Network 캡처가 검증된 결과에 참여했습니다. 그래도 최종 diff는 후보와 경고를 함께 확인해야 합니다.";
+        } else if (debuggerBridge.confirmedPayloadCount > 0) {
+            status = "DEBUGGER_ASSISTED";
+            label = "자동 네트워크 확정 수집 모드";
+            recommendedAction = "확장 프로그램이 실행 중에만 Instagram 목록 응답을 자동 캡처해 확정 비교에 반영했습니다.";
         } else if (bridge.candidatePayloadCount > 0) {
             status = "DEVTOOLS_CANDIDATES_ONLY";
             label = "DevTools 후보만 수신";
@@ -897,6 +944,15 @@
                 code: "devtools_candidates_only",
                 severity: "warning",
                 message: "DevTools Network 캡처가 후보 계정만 제공했고 검증된 DevTools payload는 없었습니다. 후보는 final diff에서 제외됩니다."
+            });
+        } else if (debuggerBridge.candidatePayloadCount > 0) {
+            status = "DEBUGGER_CANDIDATES_ONLY";
+            label = "자동 네트워크 후보만 수신";
+            recommendedAction = "정확한 followers/following 응답을 받지 못했습니다. Instagram 탭을 새로고침한 뒤 다시 실행하세요.";
+            warnings.push({
+                code: "debugger_candidates_only",
+                severity: "warning",
+                message: "자동 네트워크 캡처가 후보 계정만 제공했고 확정 payload는 없었습니다. 후보는 final diff에서 제외됩니다."
             });
         } else if (pageBridge.confirmedPayloadCount > 0) {
             status = "PAGE_NETWORK_ASSISTED";
@@ -925,6 +981,15 @@
                 severity: "warning",
                 message: "DevTools 브리지는 연결됐지만 followers/following 네트워크 payload가 들어오지 않았습니다. DevTools를 연 뒤 새로고침하지 않았다면 일부 요청이 누락됐을 수 있습니다."
             });
+        } else if (isDebuggerBridgeReady()) {
+            status = "DEBUGGER_CONNECTED_NO_PAYLOAD";
+            label = "자동 네트워크 연결됨, 목록 payload 미수신";
+            recommendedAction = "Instagram 탭을 새로고침한 뒤 다시 실행해 followers/following 요청을 다시 발생시키세요.";
+            warnings.push({
+                code: "debugger_connected_no_payload",
+                severity: "warning",
+                message: "자동 네트워크 캡처는 연결됐지만 followers/following 확정 payload가 들어오지 않았습니다. 연결 상태만으로 결과를 확정하지 않습니다."
+            });
         } else if (networkHookCount > 0) {
             status = "XHR_FETCH_DOM_ONLY";
             label = "편의 모드(XHR/fetch + DOM, DevTools 없음)";
@@ -934,6 +999,13 @@
                 message: "DevTools Network 캡처가 연결되지 않아 XHR/fetch 후크와 DOM 수집만 사용했습니다. 정확도 우선 모드가 아닙니다."
             });
         } else {
+            if (state.debuggerBridge.lastError === "debugger-busy") {
+                warnings.push({
+                    code: "debugger_busy_fallback",
+                    severity: "warning",
+                    message: "다른 DevTools 또는 디버거가 이 탭을 사용 중이라 자동 캡처를 건너뛰고 참고용 수집으로 계속했습니다."
+                });
+            }
             warnings.push({
                 code: "dom_preview_no_network_evidence",
                 severity: "warning",
@@ -953,6 +1025,7 @@
             devtoolsLastReadyAt: bridge.lastReadyAt,
             devtoolsLastPayloadAt: bridge.lastPayloadAt,
             devtoolsLastStatusAt: bridge.lastStatusAt,
+            debuggerBridge,
             pageNetworkBridge: pageBridge,
             networkHookEvidenceCount: networkHookCount,
             sourceTotals,
@@ -962,7 +1035,7 @@
 
     function printAccuracyModeNotice(summary = {}, reason = "status") {
         const accuracyMode = getAccuracyMode(summary);
-        const style = accuracyMode.status === "DEVTOOLS_ASSISTED"
+        const style = ["DEVTOOLS_ASSISTED", "DEBUGGER_ASSISTED"].includes(accuracyMode.status)
             ? "color: #007a3d; font-weight: bold;"
             : "color: #cc6600; font-weight: bold;";
 
@@ -1398,6 +1471,123 @@
         return snapshot;
     }
 
+    function handleDebuggerBridgeMessage(message, sendResponse) {
+        if (message.source !== "debugger-network" || message.schemaVersion !== 1) {
+            sendResponse?.({ ok: false, error: "invalid-debugger-schema" });
+            return false;
+        }
+
+        const bindingMatches = message.runId === state.runId && message.profile === state.runProfile;
+        const captureMatches = !state.debuggerBridge.captureSessionId ||
+            message.captureSessionId === state.debuggerBridge.captureSessionId;
+        if (!bindingMatches || !captureMatches) {
+            sendResponse?.({ ok: true, ignored: "debugger-binding-mismatch" });
+            return false;
+        }
+
+        if (message.type === "IG_DEBUGGER_READY") {
+            state.debuggerBridge.ready = true;
+            state.debuggerBridge.attached = true;
+            state.debuggerBridge.captureSessionId = String(message.captureSessionId || "");
+            state.debuggerBridge.runId = message.runId;
+            state.debuggerBridge.profile = message.profile;
+            state.debuggerBridge.statusCount++;
+            state.debuggerBridge.lastReadyAt = message.capturedAt || new Date().toISOString();
+            state.debuggerBridge.lastStatus = message.reason || "ready";
+            state.debuggerBridge.lastError = null;
+            sendResponse?.({ ok: true, status: getDebuggerBridgeSnapshot() });
+            return false;
+        }
+
+        if (message.type === "IG_DEBUGGER_DETACHED" ||
+            (message.type === "IG_DEBUGGER_STATUS" && ["stopped", "detached"].includes(message.status))) {
+            state.debuggerBridge.ready = false;
+            state.debuggerBridge.attached = false;
+            state.debuggerBridge.statusCount++;
+            state.debuggerBridge.lastStatusAt = message.capturedAt || new Date().toISOString();
+            state.debuggerBridge.lastStatus = message.reason || message.status || "detached";
+            if (window.__igFollowerRunInProgress === true && message.type === "IG_DEBUGGER_DETACHED") {
+                console.log("ℹ️ 자동 네트워크 캡처가 분리되었습니다. 이미 수집한 결과는 보존하며 자동 재연결은 하지 않습니다.");
+            }
+            sendResponse?.({ ok: true, status: getDebuggerBridgeSnapshot() });
+            return false;
+        }
+
+        if (message.type === "IG_DEBUGGER_STATUS") {
+            state.debuggerBridge.statusCount++;
+            state.debuggerBridge.lastStatusAt = message.capturedAt || new Date().toISOString();
+            state.debuggerBridge.lastStatus = message.reason || message.status || "status";
+            state.debuggerBridge.lastError = message.error || null;
+            if (message.reason === "rate-limited" || message.status === "rate-limited") {
+                registerRateLimitSignal("debugger-network");
+            }
+            sendResponse?.({ ok: true, status: getDebuggerBridgeSnapshot() });
+            return false;
+        }
+
+        if (message.type !== "IG_DEBUGGER_USERNAMES" || !Array.isArray(message.usernames)) {
+            return false;
+        }
+        if (window.__igFollowerRunInProgress !== true) {
+            state.debuggerBridge.postRunIgnoredPayloadCount++;
+            state.debuggerBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
+            if (!state.debuggerBridge.postRunNoticeShown) {
+                state.debuggerBridge.postRunNoticeShown = true;
+                console.log("ℹ️ 실행 종료 후 도착한 자동 네트워크 payload는 저장된 결과 보호를 위해 반영하지 않습니다.");
+            }
+            sendResponse?.({ ok: true, ignored: "run-not-active" });
+            return false;
+        }
+
+        const mode = ["followers", "following"].includes(message.mode) ? message.mode : "";
+        const exact = message.confidence === "exact" && message.pagination?.exactEndpoint === true;
+        if (!mode || (!exact && message.confidence !== "candidate")) {
+            state.debuggerBridge.lastError = "invalid-debugger-payload";
+            sendResponse?.({ ok: false, error: "invalid-debugger-payload" });
+            return false;
+        }
+
+        const targetSet = mode === "following" ? state.followingUsers : state.collectedUsers;
+        let added = 0;
+        if (exact) {
+            const pagination = state.pagination[mode];
+            pagination.debuggerExactPayloadCount++;
+            pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
+            if (message.pagination?.recognized === true) {
+                pagination.recognized = true;
+                pagination.hasMore = typeof message.pagination.hasMore === "boolean" ? message.pagination.hasMore : null;
+                pagination.terminal = message.pagination.terminal === true;
+                pagination.terminalReason = message.pagination.terminalReason || null;
+            }
+            demoteDomOnlyConfirmedUsers(mode, "debugger-exact-evidence-arrived");
+        }
+
+        for (const username of message.usernames.slice(0, 2000)) {
+            if (exact) {
+                if (addUsername(username, targetSet, "debugger", mode, {
+                    reason: "debugger-exact-endpoint",
+                    payloadUsernameCount: message.usernames.length,
+                    safeUrlLabel: message.endpoint || null
+                })) added++;
+            } else if (addCandidateUsername(username, mode, "debugger", "debugger-candidate-endpoint")) {
+                added++;
+            }
+        }
+
+        state.debuggerBridge.payloadCount++;
+        if (exact) state.debuggerBridge.confirmedPayloadCount++;
+        else state.debuggerBridge.candidatePayloadCount++;
+        state.debuggerBridge.addedCount += added;
+        state.debuggerBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
+        state.debuggerBridge.lastError = null;
+        const modeLabel = mode === "following" ? "Following" : "Followers";
+        console.log(exact
+            ? `📡 [자동 네트워크] ${modeLabel} +${added} / 총 ${targetSet.size} (응답 username ${message.usernames.length}개)`
+            : `🧪 [자동 네트워크] ${modeLabel} 후보 +${added} / 후보 총 ${state.candidateUsers[mode].size}`);
+        sendResponse?.({ ok: true, added, total: targetSet.size, status: getDebuggerBridgeSnapshot() });
+        return false;
+    }
+
     function installExtensionMessageBridge() {
         if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
             state.devtoolsBridge.lastError = "chrome.runtime.onMessage unavailable";
@@ -1414,8 +1604,12 @@
         }
 
         const handler = (message, sender, sendResponse) => {
-            if (!message || !/^IG_DEVTOOLS_/.test(message.type || "")) {
+            if (!message || !/^IG_(DEVTOOLS|DEBUGGER)_/.test(message.type || "")) {
                 return false;
+            }
+
+            if (/^IG_DEBUGGER_/.test(message.type)) {
+                return handleDebuggerBridgeMessage(message, sendResponse);
             }
 
             if (message.source !== "devtools-network" || message.schemaVersion !== 1) {
@@ -1583,6 +1777,7 @@
         window.__igFollowerExtensionBridgeHandler = handler;
         window.__igFollowerDevToolsStatus = getDevtoolsBridgeSnapshot;
         window.__igFollowerPrintDevToolsStatus = logDevtoolsBridgeStatus;
+        window.__igFollowerDebuggerStatus = getDebuggerBridgeSnapshot;
         window.__igFollowerDebug = printReadableDebugSummary;
         window.__igFollowerExplainUser = explainUsername;
 
@@ -1617,6 +1812,66 @@
         });
     }
 
+    function bindAutomaticDebuggerCapture() {
+        return new Promise((resolve) => {
+            try {
+                chrome.runtime.sendMessage({
+                    type: "IG_DEBUGGER_BIND",
+                    source: "instagram-collector",
+                    schemaVersion: 1,
+                    runId: state.runId,
+                    profile: state.runProfile
+                }, (response) => {
+                    if (chrome.runtime.lastError || !response?.ok || !response.session?.captureSessionId) {
+                        const reason = chrome.runtime.lastError?.message || response?.reason || "debugger-session-unavailable";
+                        state.debuggerBridge.lastError = reason;
+                        resolve({ ok: false, reason });
+                        return;
+                    }
+                    const session = response.session;
+                    state.debuggerBridge.ready = true;
+                    state.debuggerBridge.attached = session.attached === true;
+                    state.debuggerBridge.captureSessionId = session.captureSessionId;
+                    state.debuggerBridge.runId = session.runId;
+                    state.debuggerBridge.profile = session.profile;
+                    state.debuggerBridge.lastReadyAt = new Date().toISOString();
+                    state.debuggerBridge.lastError = null;
+                    console.log("🔎 자동 네트워크 캡처 연결됨. 실행이 끝나면 즉시 분리합니다.");
+                    resolve({ ok: true, session: getDebuggerBridgeSnapshot() });
+                });
+            } catch (error) {
+                const reason = error?.message || "debugger-bind-failed";
+                state.debuggerBridge.lastError = reason;
+                resolve({ ok: false, reason });
+            }
+        });
+    }
+
+    function stopAutomaticDebuggerCapture(reason = "run-finished") {
+        if (!state.debuggerBridge.captureSessionId || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+            return Promise.resolve({ ok: true, detached: false });
+        }
+        return new Promise((resolve) => {
+            try {
+                chrome.runtime.sendMessage({
+                    type: "IG_DEBUGGER_STOP",
+                    source: "instagram-collector",
+                    schemaVersion: 1,
+                    runId: state.runId,
+                    captureSessionId: state.debuggerBridge.captureSessionId,
+                    reason
+                }, (response) => {
+                    const runtimeError = chrome.runtime.lastError?.message;
+                    state.debuggerBridge.ready = false;
+                    state.debuggerBridge.attached = false;
+                    resolve(runtimeError ? { ok: false, reason: runtimeError } : (response || { ok: true }));
+                });
+            } catch (error) {
+                resolve({ ok: false, reason: error?.message || "debugger-stop-failed" });
+            }
+        });
+    }
+
     async function runAccuracyPreflight(summary = {}) {
         const startedAt = new Date().toISOString();
         recordRunEvent("accuracy_preflight_start", { graceMs: DEVTOOLS_PREFLIGHT_GRACE_MS });
@@ -1625,7 +1880,7 @@
         await wait(DEVTOOLS_PREFLIGHT_GRACE_MS, 200);
 
         let autoEnabled = false;
-        if (!isDevtoolsBridgeFresh() && PAGE_NETWORK_AUTO_ASSIST_ENABLED) {
+        if (!isDevtoolsBridgeFresh() && !isDebuggerBridgeReady() && PAGE_NETWORK_AUTO_ASSIST_ENABLED) {
             requestPageNetworkBridgeEnable("auto-assist-devtools-not-ready");
             autoEnabled = true;
             await wait(500, 200);
@@ -1636,11 +1891,14 @@
             finishedAt: new Date().toISOString(),
             graceMs: DEVTOOLS_PREFLIGHT_GRACE_MS,
             devtoolsReady: isDevtoolsBridgeFresh(),
+            debuggerReady: isDebuggerBridgeReady(),
             pageNetworkReady: Boolean(state.pageNetworkBridge.ready),
             pageNetworkEnabled: Boolean(state.pageNetworkBridge.enabled),
             pageNetworkAutoEnabled: Boolean(autoEnabled || state.pageNetworkBridge.autoEnabled),
             syncResponseOk: Boolean(syncResponse?.ok),
-            reason: state.devtoolsBridge.ready ? "devtools-ready" : "devtools-not-ready-auto-assist"
+            reason: isDevtoolsBridgeFresh()
+                ? "devtools-ready"
+                : (isDebuggerBridgeReady() ? "debugger-ready" : "network-capture-unavailable")
         };
 
         state.accuracyPreflight = result;
@@ -1649,6 +1907,8 @@
 
         if (result.devtoolsReady) {
             console.log("🔌 정확도 preflight: DevTools bridge 연결 확인");
+        } else if (result.debuggerReady) {
+            console.log("🔎 정확도 preflight: 자동 네트워크 캡처 연결 확인");
         } else if (result.pageNetworkAutoEnabled) {
             console.log("🧪 정확도 preflight: DevTools bridge 미연결 → page network bridge 자동 보조 활성화");
         } else {
@@ -3535,6 +3795,7 @@
         const safeDomEnd = endReason === "stalled_at_list_end" || endReason === "target_reached";
         const sourceCounts = getSourceCounts(mode);
         const devtoolsCandidateCount = candidates.filter((username) => state.userProvenance[mode]?.get(username)?.sources?.has("DevTools")).length;
+        const debuggerCandidateCount = candidates.filter((username) => state.userProvenance[mode]?.get(username)?.sources?.has("Debugger")).length;
         const completion = engine?.assessListCompletion({
             expectedCount: state.expectedCountEvidence[mode] || expectedCount || null,
             confirmedCount,
@@ -3547,6 +3808,9 @@
             devtoolsConnected: isDevtoolsBridgeFresh(),
             devtoolsExactPayloadCount: state.pagination[mode].exactPayloadCount,
             devtoolsCandidatePayloadCount: devtoolsCandidateCount,
+            debuggerConnected: isDebuggerBridgeReady(),
+            debuggerExactPayloadCount: state.pagination[mode].debuggerExactPayloadCount,
+            debuggerCandidatePayloadCount: debuggerCandidateCount,
             pageNetworkExactPayloadCount: state.pagination[mode].pageNetworkExactPayloadCount,
             pageNetworkCandidatePayloadCount: state.pageNetworkBridge.candidatePayloadCount,
             domEvidenceCount: (sourceCounts.DOM || 0) + (sourceCounts["dom-observer"] || 0),
@@ -4180,6 +4444,7 @@
                 hasMore: null,
                 terminalReason: null,
                 exactPayloadCount: 0,
+                debuggerExactPayloadCount: 0,
                 pageNetworkExactPayloadCount: 0,
                 lastCapturedAt: null
             };
@@ -4201,6 +4466,23 @@
         state.devtoolsBridge.lastPayloadAt = null;
         state.devtoolsBridge.postRunIgnoredPayloadCount = 0;
         state.devtoolsBridge.postRunNoticeShown = false;
+        state.debuggerBridge.ready = false;
+        state.debuggerBridge.attached = false;
+        state.debuggerBridge.captureSessionId = "";
+        state.debuggerBridge.runId = "";
+        state.debuggerBridge.profile = "unknown_profile";
+        state.debuggerBridge.statusCount = 0;
+        state.debuggerBridge.payloadCount = 0;
+        state.debuggerBridge.confirmedPayloadCount = 0;
+        state.debuggerBridge.candidatePayloadCount = 0;
+        state.debuggerBridge.addedCount = 0;
+        state.debuggerBridge.lastReadyAt = null;
+        state.debuggerBridge.lastStatusAt = null;
+        state.debuggerBridge.lastPayloadAt = null;
+        state.debuggerBridge.lastError = null;
+        state.debuggerBridge.lastStatus = null;
+        state.debuggerBridge.postRunIgnoredPayloadCount = 0;
+        state.debuggerBridge.postRunNoticeShown = false;
         state.pageNetworkBridge.payloadCount = 0;
         state.pageNetworkBridge.confirmedPayloadCount = 0;
         state.pageNetworkBridge.candidatePayloadCount = 0;
@@ -4230,6 +4512,7 @@
         }
         installExtensionMessageBridge();
         installPageNetworkBridgeListener();
+        await bindAutomaticDebuggerCapture();
         summary.accuracyPreflight = await runAccuracyPreflight(summary);
         printAccuracyModeNotice(summary, "실행 시작");
         emitRunProgress("preflight", "running", summary, { force: true });
@@ -4475,6 +4758,7 @@
             console.log("❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
             printSummary(summary);
         } finally {
+            await stopAutomaticDebuggerCapture(summary.status || "run-finished");
             if (window.__igFollowerActiveRunId === state.runId) {
                 window.__igFollowerRunInProgress = false;
             }
