@@ -36,9 +36,12 @@ async function getWorker(browser) {
 }
 
 async function openFixturePage(browser, origin, search = '') {
+  const worker = await getWorker(browser);
+  await worker.evaluate(async () => chrome.storage.session.clear());
   const page = await browser.newPage();
   const logs = [];
   page.on('console', (msg) => logs.push(msg.text()));
+  page.on('pageerror', (error) => logs.push(`[pageerror] ${error?.stack || error?.message || String(error)}`));
   await page.goto(`${origin}/fixtureprofile/${search}`, { waitUntil: 'networkidle0' });
   await page.bringToFront();
   return { page, logs };
@@ -57,7 +60,10 @@ async function getFixtureTabId(browser) {
 async function inject(browser, tabId) {
   const worker = await getWorker(browser);
   // This calls the same injection helper used by the action click path; the e2e runner only bypasses the Instagram URL gate.
-  await worker.evaluate((id) => injectInstagramCollector(id), tabId);
+  await worker.evaluate((id) => {
+    void injectInstagramCollector(id);
+    return true;
+  }, tabId);
 }
 
 async function sendDevtoolsUsernames(browser, tabId, mode, usernames) {
@@ -68,15 +74,47 @@ async function sendDevtoolsUsernames(browser, tabId, mode, usernames) {
       source: 'devtools-network',
       schemaVersion: 1,
       mode: modeName,
+      status: 200,
       usernames: users,
+      pagination: {
+        exactEndpoint: true,
+        itemCount: users.length,
+        recognized: true,
+        hasMore: false,
+        terminal: true,
+        terminalReason: 'fixture_terminal_page'
+      },
       capturedAt: new Date().toISOString()
     });
   }, { id: tabId, modeName: mode, users: usernames });
 }
 
-async function waitForResult(page, timeout = 120000) {
-  await page.waitForFunction(() => window.__igFollowerResult, { timeout });
-  return page.evaluate(() => window.__igFollowerResult);
+async function sendDevtoolsStatus(browser, tabId, reason) {
+  const worker = await getWorker(browser);
+  await worker.evaluate(async ({ id, statusReason }) => {
+    await chrome.tabs.sendMessage(id, {
+      type: 'IG_DEVTOOLS_STATUS',
+      source: 'devtools-network',
+      schemaVersion: 1,
+      reason: statusReason,
+      capturedAt: new Date().toISOString()
+    });
+  }, { id: tabId, statusReason: reason });
+}
+
+async function waitForResult(browser, timeout = 120000, logs = []) {
+  const worker = await getWorker(browser);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    const result = await worker.evaluate(async () => {
+      const storage = await chrome.storage.session.get(null);
+      const lastRun = storage['ig_follower_snapshot:lastRun'];
+      return lastRun?.ref ? storage[lastRun.ref] || null : null;
+    });
+    if (result) return result;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for session snapshot\nRecent page logs:\n${logs.slice(-40).join('\n')}`);
 }
 
 async function runScenario(name, fn) {
@@ -89,11 +127,16 @@ async function runScenario(name, fn) {
 }
 
 function assertStandardResult(result, logs) {
+  const comparison = result.trustVerdict?.code === 'REFERENCE_ONLY'
+    ? result.diffs.assistedPreview
+    : result.diffs;
   assert.equal(result.followers.length, EXPECTED.followers);
   assert.equal(result.following.length, EXPECTED.following);
-  assert.equal(result.diffs.mutualCount, EXPECTED.mutual);
-  assert.equal(result.diffs.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
-  assert.equal(result.diffs.iFollowButNotReturned.length, EXPECTED.followingOnly);
+  assert.equal(result.trustVerdict?.code, 'REFERENCE_ONLY');
+  assert.equal(result.diffs.mutualCount, 0, 'strict final diff must exclude DOM-only evidence');
+  assert.equal(comparison.mutualCount, EXPECTED.mutual);
+  assert.equal(comparison.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
+  assert.equal(comparison.iFollowButNotReturned.length, EXPECTED.followingOnly);
   assert.equal(result.diffs.integrity.ok, true);
   assert(logs.some((line) => line.includes('Instagram 비교 결과')), 'missing Korean comparison card log');
 }
@@ -102,7 +145,7 @@ async function scenarioStandard(browser, origin) {
   const { page, logs } = await openFixturePage(browser, origin);
   const tabId = await getFixtureTabId(browser);
   await inject(browser, tabId);
-  const result = await waitForResult(page);
+  const result = await waitForResult(browser, 120000, logs);
   assertStandardResult(result, logs);
   await page.close();
 }
@@ -113,7 +156,7 @@ async function scenarioDoubleInject(browser, origin) {
   await inject(browser, tabId);
   await new Promise((resolve) => setTimeout(resolve, 2000));
   await inject(browser, tabId);
-  const result = await waitForResult(page);
+  const result = await waitForResult(browser, 120000, logs);
   assert(result.runId, 'missing runId');
   assert(logs.some((line) => line.includes('이전 수집 실행이 아직 진행 중')), 'missing re-entry Korean log');
   assertStandardResult(result, logs);
@@ -126,7 +169,7 @@ async function scenarioModalClosed(browser, origin) {
   await inject(browser, tabId);
   await page.waitForSelector('[role="dialog"]', { timeout: 20000 });
   await page.evaluate(() => document.querySelector('[role="dialog"]')?.remove());
-  const result = await waitForResult(page);
+  const result = await waitForResult(browser, 120000, logs);
   const reason = result.scroll?.followersEndReason || result.debugReport?.sources?.dom?.followersEndReason || '';
   assert(['scroll_box_detached', 'no_scroll_box', 'profile_changed'].includes(reason), `unexpected partial reason: ${reason}`);
   assert(logs.some((line) => line.includes('partial') || line.includes('미완료') || line.includes('스크롤 박스')), 'missing partial Korean log');
@@ -138,16 +181,7 @@ async function scenarioRateLimit(browser, origin) {
   const tabId = await getFixtureTabId(browser);
   await inject(browser, tabId);
   await page.waitForFunction(() => document.querySelector('[role="dialog"]'), { timeout: 20000 });
-  await page.evaluate(() => {
-    window.postMessage({
-      source: 'ig-page-network-bridge',
-      schemaVersion: 1,
-      type: 'IG_PAGE_NETWORK_STATUS',
-      reason: 'rate-limited',
-      capturedAt: new Date().toISOString()
-    }, '*');
-  });
-  await page.waitForFunction(() => window.__igE2eLogsReady === true || true, { timeout: 1 }).catch(() => {});
+  await sendDevtoolsStatus(browser, tabId, 'rate-limited');
   await new Promise((resolve) => setTimeout(resolve, 800));
   assert(logs.some((line) => line.includes('요청 제한(429) 신호 감지')), 'missing 429 detection Korean log');
   assert(logs.some((line) => line.includes('일시정지')), 'missing pause Korean log');
@@ -158,11 +192,20 @@ async function scenarioDisplayedCountIncludesInactive(browser, origin) {
   const { page, logs } = await openFixturePage(browser, origin, '?display_gap=2');
   const tabId = await getFixtureTabId(browser);
   await inject(browser, tabId);
-  await page.waitForFunction(() => window.__igFollowerPrintDevToolsStatus, { timeout: 20000 });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   await sendDevtoolsUsernames(browser, tabId, 'followers', FOLLOWERS);
   await sendDevtoolsUsernames(browser, tabId, 'following', FOLLOWING);
-  const result = await waitForResult(page);
-  assert.equal(result.status, 'completed_at_list_end');
+  const result = await waitForResult(browser, 120000, logs);
+  assert.equal(result.trustVerdict?.code, 'CONFIRMED', JSON.stringify({
+    trustVerdict: result.trustVerdict,
+    completion: result.completion,
+    pagination: result.pagination,
+    sourceCounts: {
+      followers: result.snapshots?.followers?.sourceCounts,
+      following: result.snapshots?.following?.sourceCounts
+    },
+    recentLogs: logs.slice(-30)
+  }, null, 2));
   assert.equal(result.followers.length, EXPECTED.followers);
   assert.equal(result.following.length, EXPECTED.following);
   assert.equal(result.diffs.mutualCount, EXPECTED.mutual);
@@ -178,10 +221,10 @@ async function scenarioDisplayedCountIncludesInactive(browser, origin) {
 }
 
 async function scenarioStorageRef(browser, origin) {
-  const { page } = await openFixturePage(browser, origin);
+  const { page, logs } = await openFixturePage(browser, origin);
   const tabId = await getFixtureTabId(browser);
   await inject(browser, tabId);
-  await waitForResult(page);
+  await waitForResult(browser, 120000, logs);
   const worker = await getWorker(browser);
   const storage = await worker.evaluate(async () => chrome.storage.session.get(null));
   const lastRun = storage['ig_follower_snapshot:lastRun'];
@@ -197,7 +240,7 @@ async function main() {
   const browser = await launchBrowser(extensionDir);
   await getWorker(browser);
 
-  const scenarios = [
+  const allScenarios = [
     ['A standard collection', () => scenarioStandard(browser, fixture.origin)],
     ['B double injection', () => scenarioDoubleInject(browser, fixture.origin)],
     ['C forced modal close', () => scenarioModalClosed(browser, fixture.origin)],
@@ -205,6 +248,10 @@ async function main() {
     ['F displayed count includes inactive', () => scenarioDisplayedCountIncludesInactive(browser, fixture.origin)],
     ['E storage lastRun ref', () => scenarioStorageRef(browser, fixture.origin)]
   ];
+  const scenarioFilter = String(process.env.E2E_SCENARIO || '').trim().toLowerCase();
+  const scenarios = scenarioFilter
+    ? allScenarios.filter(([name]) => name.toLowerCase().includes(scenarioFilter))
+    : allScenarios;
 
   const results = [];
   for (const [name, fn] of scenarios) {

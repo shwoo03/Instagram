@@ -6,9 +6,16 @@ const BUILD_DIR = path.join(ROOT, 'tools/e2e/.build');
 const FILES = [
   'manifest.json',
   'background.js',
+  'accuracy-engine.js',
   'main.js',
   'devtools.js',
   'devtools.html',
+  'devtools-panel.html',
+  'devtools-panel.css',
+  'devtools-panel.js',
+  'popup.html',
+  'popup.css',
+  'popup.js',
   'page-network-bridge.js'
 ];
 
@@ -35,24 +42,20 @@ async function patchBackgroundForE2e() {
   const backgroundPath = path.join(BUILD_DIR, 'background.js');
   const source = await fs.readFile(backgroundPath, 'utf8');
   const replacement = `async function injectInstagramCollector(tabId) {
-  async function executeFileWithoutAwaitingLastExpression(file, world) {
-    const response = await fetch(chrome.runtime.getURL(file));
-    const source = await response.text();
+  try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      world,
-      func: (scriptSource) => { new Function(scriptSource)(); },
-      args: [source]
+      files: ["page-network-bridge.js"],
+      world: "MAIN"
     });
-  }
-
-  try {
-    await executeFileWithoutAwaitingLastExpression("page-network-bridge.js", "MAIN");
   } catch (error) {
     console.log("[IG Comparator] page network bridge injection failed:", error?.message || error);
   }
 
-  await executeFileWithoutAwaitingLastExpression("main.js");
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["accuracy-engine.js", "main.js"]
+  });
 }`;
   await fs.writeFile(backgroundPath, replaceFunctionSource(source, 'injectInstagramCollector', replacement));
 }

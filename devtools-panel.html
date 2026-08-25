@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>IG Comparator 진단</title>
+  <link rel="stylesheet" href="devtools-panel.css">
+</head>
+<body>
+  <main class="panel-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">IG</div>
+      <div class="topbar-copy">
+        <p>INSTAGRAM FOLLOW RELATION</p>
+        <h1>Comparator 진단</h1>
+      </div>
+      <div class="topbar-actions">
+        <span id="stateBadge" class="badge" data-tone="neutral">확인 중</span>
+        <button id="copyButton" class="secondary-button" type="button" disabled>진단 복사</button>
+      </div>
+    </header>
+
+    <section class="verdict-card" aria-labelledby="verdictTitle">
+      <div id="verdictIcon" class="verdict-icon" data-tone="neutral" aria-hidden="true"></div>
+      <div class="verdict-copy">
+        <p id="verdictKicker">저장된 상태 확인 중</p>
+        <h2 id="verdictTitle">진단 데이터를 기다리고 있습니다</h2>
+        <p id="verdictDescription">Instagram 탭에서 비교를 실행하면 수집 근거와 종료 상태가 여기에 표시됩니다.</p>
+      </div>
+      <div class="verdict-meta">
+        <span>최근 업데이트</span>
+        <strong id="updatedAt">—</strong>
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="listTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">COLLECTION COUNTS</p>
+          <h2 id="listTitle">목록별 수집 상태</h2>
+        </div>
+        <span id="integrityBadge" class="badge" data-tone="neutral">실행 대기</span>
+      </div>
+
+      <div class="list-grid">
+        <article class="list-card">
+          <header>
+            <div>
+              <span class="list-index">01</span>
+              <h3>팔로워</h3>
+            </div>
+            <strong id="followersHeadline">—</strong>
+          </header>
+          <dl class="count-rows">
+            <div><dt>표시 예상</dt><dd id="followersExpected">—</dd></div>
+            <div><dt>DevTools 확정</dt><dd id="followersConfirmed">—</dd></div>
+            <div><dt>보조 증거</dt><dd id="followersAssisted">—</dd></div>
+            <div><dt>검토 후보</dt><dd id="followersCandidates">—</dd></div>
+          </dl>
+          <div class="terminal-row">
+            <span>페이지네이션</span>
+            <strong id="followersPagination">인식 전</strong>
+          </div>
+        </article>
+
+        <article class="list-card">
+          <header>
+            <div>
+              <span class="list-index">02</span>
+              <h3>팔로잉</h3>
+            </div>
+            <strong id="followingHeadline">—</strong>
+          </header>
+          <dl class="count-rows">
+            <div><dt>표시 예상</dt><dd id="followingExpected">—</dd></div>
+            <div><dt>DevTools 확정</dt><dd id="followingConfirmed">—</dd></div>
+            <div><dt>보조 증거</dt><dd id="followingAssisted">—</dd></div>
+            <div><dt>검토 후보</dt><dd id="followingCandidates">—</dd></div>
+          </dl>
+          <div class="terminal-row">
+            <span>페이지네이션</span>
+            <strong id="followingPagination">인식 전</strong>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section" aria-labelledby="compareTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">STRICT COMPARISON</p>
+          <h2 id="compareTitle">확정 집합 비교</h2>
+        </div>
+      </div>
+      <div class="metric-grid">
+        <article class="metric-card"><span>맞팔</span><strong id="mutualCount">—</strong></article>
+        <article class="metric-card"><span>나만 팔로우</span><strong id="followingOnlyCount">—</strong></article>
+        <article class="metric-card"><span>나를 팔로우</span><strong id="followersOnlyCount">—</strong></article>
+      </div>
+      <p class="metric-footnote">후보 계정은 확정 집합과 맞팔 계산에 포함하지 않습니다.</p>
+    </section>
+
+    <div class="diagnostic-grid">
+      <section class="dashboard-section" aria-labelledby="evidenceTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">EVIDENCE SOURCES</p>
+            <h2 id="evidenceTitle">증거 연결 상태</h2>
+          </div>
+        </div>
+        <dl class="diagnostic-rows">
+          <div><dt>DevTools</dt><dd id="devtoolsStatus" data-state="off">연결 대기</dd></div>
+          <div><dt>Page Network</dt><dd id="pageNetworkStatus" data-state="off">비활성</dd></div>
+          <div><dt>DOM</dt><dd id="domStatus" data-state="off">대기</dd></div>
+          <div><dt>수집 단계</dt><dd id="stageStatus">—</dd></div>
+          <div><dt>종료 상태</dt><dd id="runStatus">—</dd></div>
+        </dl>
+      </section>
+
+      <section class="dashboard-section" aria-labelledby="warningTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">ATTENTION</p>
+            <h2 id="warningTitle">경고와 권장 조치</h2>
+          </div>
+        </div>
+        <div id="emptyWarnings" class="empty-state">현재 표시할 경고가 없습니다.</div>
+        <ul id="warningList" class="warning-list" hidden></ul>
+      </section>
+    </div>
+
+    <section class="dashboard-section" aria-labelledby="timelineTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">BOUNDED TIMELINE</p>
+          <h2 id="timelineTitle">최근 실행 흐름</h2>
+        </div>
+        <span class="section-note">최대 8개 이벤트</span>
+      </div>
+      <ol id="timelineList" class="timeline-list">
+        <li class="timeline-empty">실행 이벤트를 기다리고 있습니다.</li>
+      </ol>
+    </section>
+
+    <aside class="privacy-notice" aria-labelledby="privacyTitle">
+      <span aria-hidden="true">✓</span>
+      <div>
+        <strong id="privacyTitle">개인정보를 줄인 진단 화면</strong>
+        <p>파생 사용자명, 수량, 시각, 증거 유형과 진단 정보만 브라우저 세션에 저장합니다. 이 화면과 복사 진단에는 사용자명·프로필 식별자·원본 URL·응답 본문을 포함하지 않습니다. 쿠키, 인증 헤더, DM도 저장하지 않습니다.</p>
+      </div>
+    </aside>
+
+    <p id="liveStatus" class="sr-only" aria-live="polite"></p>
+    <p id="errorStatus" class="sr-only" role="alert"></p>
+  </main>
+  <script src="devtools-panel.js"></script>
+</body>
+</html>

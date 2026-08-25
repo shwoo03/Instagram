@@ -188,3 +188,18 @@ Remaining list-end accuracy manual checklist:
 - B3: dynamic Korean subject particles now use `withSubjectParticle`, fixing `팔로잉가` to `팔로잉이` while keeping `팔로워가`.
 - Static validation passed after each B item with `node --check main.js`, `node --check background.js`, `node --check devtools.js`, `node tools/walker-fixtures.mjs`, and `node tools/compare-fixtures.mjs`.
 - Manual Chrome validation was not rerun in this pass. Remaining B-specific checks: after a completed run, manually scroll the followers/following modal and confirm one ignore notice, unchanged `window.__igFollowerResult` lengths, no `[DevTools] ... +N` set-change log, and `window.__igFollowerPrintDevToolsStatus()` showing `postRunIgnoredPayloadCount > 0`.
+
+## 2026-08-25 Accuracy Engine and Hybrid UI
+
+- Manifest version is now `1.2.0` with a responsive action popup and an `IG Comparator` DevTools panel.
+- Added `accuracy-engine.js` as the canonical pure engine for displayed-count parsing, conservative pagination evidence, list completion, trust verdicts, strict/assisted comparison, and integrity checks.
+- Final diff fields now remain strict-network-only. DOM/page-network results are exposed separately as `assistedPreview` and labeled `참고용 결과`; candidates never inflate strict mutual counts.
+- DevTools exact evidence now requires a successful 2xx response and a sanitized exact endpoint label. Small displayed-count gaps require both a recognized terminal pagination signal and DOM list-end evidence.
+- Page-network messages are bound to the active run/profile capability and remain assisted evidence, not DevTools-equivalent strict evidence.
+- Popup/panel progress is stored per tab in `chrome.storage.session` and contains only counts, source flags, bounded timeline events, warnings, and the canonical verdict.
+- Always-visible UI notice states that derived usernames/counts/diagnostics stay in the browser session and that cookies, auth headers, raw responses, and DMs are not stored.
+- Validation passed: `npm test`, `git diff --check`, and all six `npm run e2e` scenarios (standard DOM reference, double injection, forced modal close, 429, terminal displayed-count gap, session ref).
+- Responsive UI QA passed at popup 320px and panel 320/736/1024px with long Korean text and seven-digit counts; no horizontal overflow was observed.
+- Pre-change real Chrome baseline was confirmed at DevTools exact 283/283, strict mutual 283, diff 0/0. Post-change real Instagram validation remains pending because the connected Chrome controller cannot operate the `chrome://extensions` internal reload button.
+
+Next operator action: open `chrome://extensions`, reload the unpacked extension once, reload the Instagram profile tab, reopen DevTools, then start from the popup and confirm the final popup/panel verdict.

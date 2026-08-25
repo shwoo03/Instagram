@@ -21,9 +21,12 @@ which diff fields may contain false positives.
 
 - `manifest.json`: Manifest V3 extension definition.
 - `background.js`: action click handler and DevTools-to-page message relay.
+- `accuracy-engine.js`: canonical count, completion, trust, and strict/assisted comparison rules.
 - `main.js`: injected page collector, modal scroller, result comparer, and Korean console reporter.
+- `popup.html`: local start/progress/result popup shown from the extension icon.
 - `devtools.html`: Chrome DevTools extension entrypoint.
 - `devtools.js`: optional DevTools Network response username extractor.
+- `devtools-panel.html`: detailed `IG Comparator` diagnostics panel.
 - `docs/PROJECT_PROFILE.md`: stable project purpose, architecture, and non-goals.
 - `docs/HANDOFF.md`: current session state and next action.
 - `docs/SECURITY.md`: privacy, permission, and data-handling boundaries.
@@ -34,7 +37,7 @@ which diff fields may contain false positives.
 Use layered collection because Instagram DOM and network behavior are unstable:
 
 1. DevTools Network capture when DevTools is open.
-2. Page-level XHR/fetch hooks from `main.js`.
+2. Optional page-network bridge evidence.
 3. DOM modal scrolling and profile-link extraction.
 4. Expected count parsing from visible Instagram labels.
 5. Diagnostics when collected counts differ from expected counts.
@@ -49,15 +52,26 @@ node --check background.js
 node --check devtools.js
 ```
 
+Or run the full local fixture suite:
+
+```bash
+npm test
+npm run e2e
+```
+
+Install locally by opening `chrome://extensions`, enabling Developer mode,
+choosing **Load unpacked**, and selecting this repository folder (the folder
+that directly contains `manifest.json`; do not select an individual file).
+
 Manual Chrome check:
 
 1. Reload the unpacked extension from `chrome://extensions`.
 2. Reload the Instagram profile tab.
 3. Open Chrome DevTools before opening followers/following lists.
-4. Click the extension action to inject `main.js`.
-5. Confirm page console logs DevTools bridge status.
-6. Open followers/following modals.
-7. Review the Korean summary, counts, provenance, and partial warnings.
+4. Click the extension icon and press **비교 시작**.
+5. Confirm the popup shows live collection status.
+6. In DevTools, open the **IG Comparator** panel for detailed evidence status.
+7. Review the Korean verdict: `확정 비교 가능`, `참고용 결과`, `부분 결과`, or `DevTools 재실행 필요`.
 
 ## Operating Rules
 

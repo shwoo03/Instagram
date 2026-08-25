@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>IG Comparator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">IG</div>
+      <div class="brand-copy">
+        <p class="eyebrow">LOCAL COMPARATOR</p>
+        <h1>팔로우 관계 비교</h1>
+      </div>
+      <span id="stateBadge" class="state-badge" data-tone="neutral">확인 중</span>
+    </header>
+
+    <section class="hero-card" aria-labelledby="statusTitle">
+      <div class="status-heading">
+        <span id="statusIcon" class="status-icon" data-tone="neutral" aria-hidden="true"></span>
+        <div>
+          <p id="statusKicker" class="status-kicker">현재 탭 확인 중</p>
+          <h2 id="statusTitle">잠시만 기다려 주세요</h2>
+        </div>
+      </div>
+      <p id="statusDescription" class="status-description">Instagram 프로필과 저장된 실행 상태를 확인하고 있습니다.</p>
+
+      <div id="progressRegion" class="progress-region" hidden>
+        <div class="progress-meta">
+          <span id="progressLabel">목록 준비 중</span>
+          <span id="progressValue">0 / ?</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-label="수집 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="progressBar"></span>
+        </div>
+      </div>
+
+      <button id="startButton" class="primary-button" type="button" disabled>
+        <span id="startButtonLabel">비교 시작</span>
+        <span class="button-arrow" aria-hidden="true">→</span>
+      </button>
+    </section>
+
+    <section class="connection-card" aria-labelledby="connectionTitle">
+      <div class="section-heading compact">
+        <h2 id="connectionTitle">수집 환경</h2>
+        <span id="connectionDot" class="connection-dot" data-connected="false" aria-hidden="true"></span>
+      </div>
+      <div class="connection-row">
+        <div>
+          <strong id="connectionLabel">DevTools 상태 확인 중</strong>
+          <p id="connectionDescription">연결 정보가 있으면 더 높은 신뢰도로 비교합니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="resultsSection" class="results-section" aria-labelledby="resultsTitle" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">COMPARE RESULT</p>
+          <h2 id="resultsTitle">비교 요약</h2>
+        </div>
+        <span id="integrityBadge" class="integrity-badge">확인 중</span>
+      </div>
+      <div class="metric-grid">
+        <article class="metric-card metric-primary">
+          <span>팔로워</span>
+          <strong id="followersCount">—</strong>
+        </article>
+        <article class="metric-card metric-primary">
+          <span>팔로잉</span>
+          <strong id="followingCount">—</strong>
+        </article>
+        <article class="metric-card">
+          <span>맞팔</span>
+          <strong id="mutualCount">—</strong>
+        </article>
+        <article class="metric-card">
+          <span>나만 팔로우</span>
+          <strong id="followingOnlyCount">—</strong>
+        </article>
+        <article class="metric-card">
+          <span>나를 팔로우</span>
+          <strong id="followersOnlyCount">—</strong>
+        </article>
+        <article class="metric-card metric-candidate">
+          <span>검토 후보</span>
+          <strong id="candidateCount">—</strong>
+        </article>
+      </div>
+    </section>
+
+    <section id="warningSection" class="message-card" hidden>
+      <h2>확인할 내용</h2>
+      <ul id="warningList"></ul>
+    </section>
+
+    <aside class="devtools-hint" aria-label="상세 진단 안내">
+      <span class="hint-icon" aria-hidden="true">⌁</span>
+      <div>
+        <strong>DevTools에서 상세 진단</strong>
+        <p>Chrome DevTools를 직접 연 뒤 <b>IG Comparator</b> 패널을 선택하세요. 확장 프로그램이 DevTools를 자동으로 열 수는 없습니다.</p>
+      </div>
+    </aside>
+
+    <aside class="privacy-notice" aria-labelledby="privacyTitle">
+      <span class="privacy-icon" aria-hidden="true">✓</span>
+      <div>
+        <strong id="privacyTitle">이 브라우저 세션에만 저장</strong>
+        <p>파생 사용자명, 수량, 시각, 증거 유형과 진단 정보만 세션에 저장합니다. 쿠키, 인증 헤더, 원본 응답, DM은 저장하지 않습니다.</p>
+      </div>
+    </aside>
+
+    <p id="liveStatus" class="sr-only" aria-live="polite"></p>
+    <p id="errorStatus" class="sr-only" role="alert"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

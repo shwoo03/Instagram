@@ -1,4 +1,5 @@
 const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
+const RUN_PROGRESS_PREFIX = "ig_run_progress:tab:";
 
 function getValidTabId(value) {
   const tabId = Number(value);
@@ -14,8 +15,13 @@ function measureApproxBytes(value) {
 }
 
 function getSafeSourceLabel(payload) {
-  const profile = payload?.profile || "unknown_profile";
+  const profile = getSafeProfile(payload?.profile);
   return `instagram-profile:${profile}`;
+}
+
+function getSafeProfile(value) {
+  const profile = String(value || "unknown_profile").trim().toLowerCase();
+  return /^[a-z0-9._]{1,30}$/.test(profile) ? profile : "unknown_profile";
 }
 
 function isInstagramTabUrl(url) {
@@ -26,6 +32,122 @@ function isInstagramTabUrl(url) {
   } catch {
     return false;
   }
+}
+
+function getRunProgressKey(tabId) {
+  const key = getValidTabId(tabId);
+  return key === null ? "" : `${RUN_PROGRESS_PREFIX}${key}`;
+}
+
+function getSafeNonNegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function sanitizeProgressList(value) {
+  return {
+    expected: getSafeNonNegativeInteger(value?.expected),
+    confirmed: getSafeNonNegativeInteger(value?.confirmed),
+    assisted: getSafeNonNegativeInteger(value?.assisted),
+    candidates: getSafeNonNegativeInteger(value?.candidates)
+  };
+}
+
+function sanitizeRunProgress(value, tabId) {
+  if (!value || typeof value !== "object") return null;
+  const safeTabId = getValidTabId(tabId);
+  if (safeTabId === null) return null;
+
+  const allowedVerdictCodes = new Set(["CONFIRMED", "REFERENCE_ONLY", "PARTIAL", "RETRY_REQUIRED", "RUNNING", ""]);
+  const verdictCode = allowedVerdictCodes.has(value.verdict?.code) ? value.verdict.code : "";
+  const warnings = Array.isArray(value.warnings)
+    ? value.warnings.filter((item) => typeof item === "string").slice(0, 20).map((item) => item.slice(0, 300))
+    : [];
+
+  return {
+    schemaVersion: 1,
+    tabId: safeTabId,
+    runId: String(value.runId || "").slice(0, 100),
+    profile: String(value.profile || "unknown_profile").slice(0, 64),
+    stage: String(value.stage || "idle").slice(0, 64),
+    status: String(value.status || "idle").slice(0, 64),
+    updatedAt: value.updatedAt || new Date().toISOString(),
+    counts: {
+      followers: sanitizeProgressList(value.counts?.followers),
+      following: sanitizeProgressList(value.counts?.following),
+      mutual: getSafeNonNegativeInteger(value.counts?.mutual),
+      followersOnly: getSafeNonNegativeInteger(value.counts?.followersOnly),
+      followingOnly: getSafeNonNegativeInteger(value.counts?.followingOnly)
+    },
+    sources: {
+      devtoolsReady: Boolean(value.sources?.devtoolsReady),
+      pageNetworkReady: Boolean(value.sources?.pageNetworkReady),
+      domOnly: Boolean(value.sources?.domOnly)
+    },
+    pagination: {
+      followers: {
+        recognized: Boolean(value.pagination?.followers?.recognized),
+        terminal: Boolean(value.pagination?.followers?.terminal)
+      },
+      following: {
+        recognized: Boolean(value.pagination?.following?.recognized),
+        terminal: Boolean(value.pagination?.following?.terminal)
+      }
+    },
+    verdict: {
+      code: verdictCode,
+      labelKo: String(value.verdict?.labelKo || "").slice(0, 80),
+      severity: String(value.verdict?.severity || "info").slice(0, 24),
+      reasons: Array.isArray(value.verdict?.reasons)
+        ? value.verdict.reasons.filter((item) => typeof item === "string").slice(0, 20).map((item) => item.slice(0, 80))
+        : [],
+      recommendedActionKo: String(value.verdict?.recommendedActionKo || "").slice(0, 200)
+    },
+    warnings,
+    timeline: Array.isArray(value.timeline)
+      ? value.timeline.slice(-8).map((item) => ({
+        code: String(item?.code || "event").slice(0, 80),
+        at: String(item?.at || "").slice(0, 40)
+      }))
+      : []
+  };
+}
+
+function storeRunProgress(message, sender, sendResponse) {
+  const tabId = getValidTabId(sender?.tab?.id);
+  const key = getRunProgressKey(tabId);
+  const progress = sanitizeRunProgress(message.progress, tabId);
+  if (!key || !progress || !chrome.storage?.session) {
+    sendResponse({ ok: false, error: "invalid-run-progress" });
+    return;
+  }
+
+  chrome.storage.session.set({ [key]: progress }).then(() => {
+    sendResponse({ ok: true, key });
+  }).catch((error) => {
+    sendResponse({ ok: false, error: error?.message || "run-progress-storage-failed" });
+  });
+}
+
+function startCollectionFromUi(message, sendResponse) {
+  const tabId = getValidTabId(message.tabId);
+  if (tabId === null) {
+    sendResponse({ ok: false, error: "invalid-tab-id" });
+    return;
+  }
+
+  chrome.tabs.get(tabId).then((tab) => {
+    if (!tab?.url || !isInstagramTabUrl(tab.url)) {
+      sendResponse({ ok: false, error: "instagram-tab-required" });
+      return;
+    }
+
+    return injectInstagramCollector(tabId).then(() => {
+      sendResponse({ ok: true, tabId });
+    });
+  }).catch((error) => {
+    sendResponse({ ok: false, error: error?.message || "collection-start-failed" });
+  });
 }
 
 function sanitizeCollectionDiagnostics(value) {
@@ -81,6 +203,8 @@ function compactDebugReport(value) {
     finalDiffPolicy: value.finalDiffPolicy || "",
     rateLimit: value.rateLimit || null,
     overallReliability: value.overallReliability || "",
+    trustVerdict: value.trustVerdict || null,
+    completion: value.completion || null,
     accuracyMode: value.accuracyMode || null,
     warnings: Array.isArray(value.warnings) ? value.warnings.slice(0, 50) : [],
     followers: value.followers || null,
@@ -107,7 +231,7 @@ function getSafeRunSnapshot(payload) {
   if (!payload || typeof payload !== "object") return null;
 
   return {
-    profile: payload.profile || "unknown_profile",
+    profile: getSafeProfile(payload.profile),
     runId: payload.runId || "",
     collectedAt: payload.collectedAt || new Date().toISOString(),
     source: getSafeSourceLabel(payload),
@@ -127,7 +251,13 @@ function getSafeRunSnapshot(payload) {
     },
     candidates: payload.candidates || null,
     diffs: payload.diffs || null,
+    trustVerdict: payload.trustVerdict || null,
+    completion: payload.completion || null,
+    followersCompletion: payload.followersCompletion || payload.completion?.followers || null,
+    followingCompletion: payload.followingCompletion || payload.completion?.following || null,
     expectedCounts: payload.expectedCounts || null,
+    expectedCountEvidence: payload.expectedCountEvidence || null,
+    pagination: payload.pagination || null,
     scroll: payload.scroll || null,
     collectionDiagnostics: sanitizeCollectionDiagnostics(payload.collectionDiagnostics),
     followClicks: payload.followClicks || null,
@@ -144,6 +274,7 @@ function buildMinimalSnapshot(snapshot) {
     followers: (snapshot.followers || []).slice(0, 5000),
     following: (snapshot.following || []).slice(0, 5000),
     expectedCounts: snapshot.expectedCounts || null,
+    trustVerdict: snapshot.trustVerdict || null,
     summaryStatus: snapshot.debugReport?.summaryStatus || null
   };
 }
@@ -345,7 +476,7 @@ function storeRunSnapshot(message, sendResponse) {
     return;
   }
 
-  const key = message.storageKey || `ig_follower_snapshot:${snapshot.profile}`;
+  const key = `ig_follower_snapshot:${snapshot.profile}`;
   const budgeted = applySnapshotBudget(snapshot);
   const storageInfo = {
     approxBytes: budgeted.approxBytes,
@@ -390,7 +521,7 @@ async function injectInstagramCollector(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["main.js"]
+    files: ["accuracy-engine.js", "main.js"]
   });
 }
 
@@ -412,12 +543,19 @@ function buildRelayPayload(message) {
       type: "IG_DEVTOOLS_USERNAMES",
       source: "devtools-network",
       schemaVersion: 1,
-      url: message.url || "",
-      method: message.method || "",
+      endpoint: String(message.endpoint || "instagram:network:candidate").slice(0, 80),
       status: message.status || 0,
       mimeType: message.mimeType || "",
       usernames: Array.isArray(message.usernames) ? message.usernames.slice(0, 2000) : [],
       mode: message.mode || "unknown",
+      pagination: message.pagination && typeof message.pagination === "object" ? {
+        exactEndpoint: Boolean(message.pagination.exactEndpoint),
+        itemCount: getSafeNonNegativeInteger(message.pagination.itemCount),
+        recognized: Boolean(message.pagination.recognized),
+        hasMore: typeof message.pagination.hasMore === "boolean" ? message.pagination.hasMore : null,
+        terminal: Boolean(message.pagination.terminal),
+        terminalReason: String(message.pagination.terminalReason || "").slice(0, 80)
+      } : null,
       capturedAt: message.capturedAt || new Date().toISOString()
     };
   }
@@ -533,12 +671,20 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   devtoolsTabs.delete(tabId);
   schedulePersistDevtoolsTabs();
+  const progressKey = getRunProgressKey(tabId);
+  if (progressKey && chrome.storage?.session) {
+    chrome.storage.session.remove(progressKey).catch(() => {});
+  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
     devtoolsTabs.delete(tabId);
     schedulePersistDevtoolsTabs();
+    const progressKey = getRunProgressKey(tabId);
+    if (progressKey && chrome.storage?.session) {
+      chrome.storage.session.remove(progressKey).catch(() => {});
+    }
   }
 });
 
@@ -547,7 +693,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "IG_START_COLLECTION") {
+    startCollectionFromUi(message, sendResponse);
+    return true;
+  }
+
+  if (message.type === "IG_RUN_PROGRESS") {
+    if (message.source !== "instagram-collector" || message.schemaVersion !== 1) {
+      sendResponse({ ok: false, error: "invalid-run-progress-schema" });
+      return false;
+    }
+    storeRunProgress(message, sender, sendResponse);
+    return true;
+  }
+
   if (message.type === "IG_STORE_RUN_SNAPSHOT") {
+    if (
+      message.source !== "instagram-collector" ||
+      message.schemaVersion !== 1 ||
+      getValidTabId(sender?.tab?.id) === null
+    ) {
+      sendResponse({ ok: false, error: "invalid-run-snapshot-schema" });
+      return false;
+    }
     storeRunSnapshot(message, sendResponse);
     return true;
   }

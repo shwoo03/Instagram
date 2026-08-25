@@ -32,8 +32,10 @@
     const RATE_LIMIT_MAX_PAUSE_MS = 240_000;
     const RATE_LIMIT_MAX_EVENTS = 3;
     const RATE_LIMIT_DEDUP_WINDOW_MS = 10_000;
+    const RUN_PROGRESS_THROTTLE_MS = 750;
     const DOM_TIER_SOURCES = new Set(["DOM", "dom-observer"]);
     const DOM_CANDIDATE_SOURCES = new Set(["dom-candidate", "dom-observer-candidate"]);
+    const STRICT_NETWORK_SOURCES = new Set(["DevTools", "XHR", "fetch"]);
 
     const FOLLOWER_BUTTON_XPATH = "//a[contains(@href, '/followers/')] | //span[contains(text(), '팔로워')] | //span[contains(text(), 'Followers')]";
     const FOLLOWING_BUTTON_XPATH = "//a[contains(@href, '/following/')] | //span[contains(text(), '팔로잉')] | //span[contains(text(), 'Following')] | //span[contains(normalize-space(.), '팔로우') and .//span]";
@@ -111,10 +113,40 @@
             followers: new Set(),
             following: new Set()
         },
+        assistedUsers: {
+            followers: new Set(),
+            following: new Set()
+        },
         expectedCounts: {
             followers: null,
             following: null
         },
+        expectedCountEvidence: {
+            followers: null,
+            following: null
+        },
+        pagination: {
+            followers: {
+                recognized: false,
+                terminal: false,
+                hasMore: null,
+                terminalReason: null,
+                exactPayloadCount: 0,
+                pageNetworkExactPayloadCount: 0,
+                lastCapturedAt: null
+            },
+            following: {
+                recognized: false,
+                terminal: false,
+                hasMore: null,
+                terminalReason: null,
+                exactPayloadCount: 0,
+                pageNetworkExactPayloadCount: 0,
+                lastCapturedAt: null
+            }
+        },
+        pageNetworkCapability: "",
+        lastProgressSentAtMs: 0,
         devtoolsBridge: {
             listenerInstalledAt: null,
             ready: false,
@@ -160,6 +192,106 @@
         },
         runTimeline: []
     };
+
+    function createRunCapability() {
+        try {
+            const bytes = new Uint32Array(4);
+            crypto.getRandomValues(bytes);
+            return Array.from(bytes, (value) => value.toString(36)).join("-");
+        } catch {
+            return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+        }
+    }
+
+    function getProgressVerdict(summary = {}) {
+        if (summary.trustVerdict?.code) return summary.trustVerdict;
+        if (summary.status === "running") {
+            return {
+                code: "RUNNING",
+                labelKo: "수집 진행 중",
+                severity: "info",
+                reasons: [],
+                recommendedActionKo: "Instagram 탭을 유지하세요."
+            };
+        }
+        return buildCanonicalTrustSnapshot(summary.diffs || null).verdict;
+    }
+
+    function buildRunProgress(stage, status, summary = {}) {
+        const diffs = summary.diffs || {};
+        const verdict = getProgressVerdict(summary);
+        const visibleDiffs = verdict.code === "REFERENCE_ONLY" && diffs.assistedPreview
+            ? diffs.assistedPreview
+            : diffs;
+        const warnings = Array.isArray(diffs.warnings)
+            ? diffs.warnings.map((warning) => typeof warning === "string" ? warning : warning?.message).filter(Boolean).slice(0, 10)
+            : [];
+        return {
+            schemaVersion: 1,
+            runId: state.runId,
+            profile: state.runProfile || getProfileKey(),
+            stage,
+            status,
+            updatedAt: new Date().toISOString(),
+            counts: {
+                followers: {
+                    expected: state.expectedCounts.followers || 0,
+                    confirmed: getStrictUsers("followers").length,
+                    assisted: getAssistedUsers("followers").length,
+                    candidates: getUnconfirmedCandidates("followers").length
+                },
+                following: {
+                    expected: state.expectedCounts.following || 0,
+                    confirmed: getStrictUsers("following").length,
+                    assisted: getAssistedUsers("following").length,
+                    candidates: getUnconfirmedCandidates("following").length
+                },
+                mutual: visibleDiffs.mutualCount || 0,
+                followersOnly: visibleDiffs.followersWithoutMeFollowing?.length || 0,
+                followingOnly: visibleDiffs.iFollowButNotReturned?.length || 0
+            },
+            sources: {
+                devtoolsReady: isDevtoolsBridgeFresh(),
+                pageNetworkReady: Boolean(state.pageNetworkBridge.ready && state.pageNetworkBridge.enabled),
+                domOnly: !hasConfirmedNetworkEvidence("followers") && !hasConfirmedNetworkEvidence("following")
+            },
+            pagination: {
+                followers: {
+                    recognized: state.pagination.followers.recognized,
+                    terminal: state.pagination.followers.terminal
+                },
+                following: {
+                    recognized: state.pagination.following.recognized,
+                    terminal: state.pagination.following.terminal
+                }
+            },
+            verdict,
+            warnings,
+            timeline: state.runTimeline.slice(-8).map((event) => ({
+                code: event.type,
+                at: event.at
+            }))
+        };
+    }
+
+    function emitRunProgress(stage, status, summary = {}, options = {}) {
+        if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+        const now = Date.now();
+        if (!options.force && now - state.lastProgressSentAtMs < RUN_PROGRESS_THROTTLE_MS) return;
+        state.lastProgressSentAtMs = now;
+        try {
+            chrome.runtime.sendMessage({
+                type: "IG_RUN_PROGRESS",
+                source: "instagram-collector",
+                schemaVersion: 1,
+                progress: buildRunProgress(stage, status, summary)
+            }, () => {
+                void chrome.runtime.lastError;
+            });
+        } catch {
+            // 진행 UI 전송 실패는 수집 자체를 중단하지 않는다.
+        }
+    }
 
     function isRunSuperseded() {
         return window.__igFollowerActiveRunId !== state.runId;
@@ -332,8 +464,24 @@
         }));
     }
 
+    function getStrictUsers(mode) {
+        const source = mode === "following" ? state.followingUsers : state.collectedUsers;
+        const bucket = state.userProvenance[mode];
+        return Array.from(source).filter((username) => {
+            const sources = Array.from(bucket?.get(username)?.sources || []);
+            return sources.some((item) => STRICT_NETWORK_SOURCES.has(item));
+        }).sort();
+    }
+
+    function getAssistedUsers(mode) {
+        const source = mode === "following" ? state.followingUsers : state.collectedUsers;
+        const users = new Set(source);
+        for (const username of state.assistedUsers[mode] || []) users.add(username);
+        return Array.from(users).sort();
+    }
+
     function getVerifiedUsers(mode) {
-        return mode === "following" ? Array.from(state.followingUsers).sort() : Array.from(state.collectedUsers).sort();
+        return getStrictUsers(mode);
     }
 
     function getSourceCounts(mode) {
@@ -382,6 +530,17 @@
     function promoteDomCandidatesToConfirmed(mode, targetSet, expectedCount, reason = "network-shortfall") {
         if (!targetSet || expectedCount <= 0 || targetSet.size >= expectedCount) return [];
 
+        const completion = getListCompletionAssessment(mode, expectedCount);
+        if (!completion.fallbackAllowed || completion.maxAssistedPromotions <= 0) {
+            console.log(`ℹ️ ${mode} DOM 후보 승격을 차단했습니다: ${(completion.fallbackBlockReasons || []).join(", ") || "안전 조건 미충족"}`);
+            recordRunEvent("dom_candidate_promotion_blocked", {
+                mode,
+                reason,
+                fallbackBlockReasons: completion.fallbackBlockReasons || []
+            });
+            return [];
+        }
+
         const bucket = state.userProvenance[mode];
         const candidates = Array.from(state.candidateUsers[mode] || [])
             .filter((username) => {
@@ -393,13 +552,14 @@
             .sort((a, b) => compareCandidateEvidence(bucket?.get(a), bucket?.get(b)) || a.localeCompare(b));
 
         const promoted = [];
-        const missing = expectedCount - targetSet.size;
-        for (const username of candidates.slice(0, missing)) {
+        const promotionLimit = Math.min(expectedCount - targetSet.size, completion.maxAssistedPromotions);
+        for (const username of candidates.slice(0, promotionLimit)) {
             if (addUsername(username, targetSet, "dom-fallback", mode, {
                 reason: `promoted-dom-candidate-${reason}`,
                 phase: `${mode}-candidate-promotion`,
                 forceEvidence: true
             })) {
+                state.assistedUsers[mode].add(username);
                 promoted.push(username);
             }
         }
@@ -428,7 +588,8 @@
     }
 
     function getListReliability(mode, expectedCount = 0) {
-        const verifiedCount = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
+        const verifiedCount = getStrictUsers(mode).length;
+        const assistedCount = getAssistedUsers(mode).length;
         const candidateCount = getUnconfirmedCandidates(mode).length;
         const coverageRatio = expectedCount > 0 ? verifiedCount / expectedCount : null;
         const completion = getListCompletionAssessment(mode, expectedCount);
@@ -460,6 +621,7 @@
         return {
             expectedCount: expectedCount || null,
             verifiedCount,
+            assistedCount,
             candidateCount,
             coverageRatio,
             status,
@@ -473,6 +635,7 @@
         const followers = getListReliability("followers", state.expectedCounts.followers || 0);
         const following = getListReliability("following", state.expectedCounts.following || 0);
         const accuracyMode = getAccuracyMode(summary);
+        const canonical = buildCanonicalTrustSnapshot(summary.diffs || null);
         const warnings = [...followers.warnings, ...following.warnings, ...accuracyMode.warnings.map((warning) => warning.message)];
         let overallReliability = "COMPLETE_HIGH_CONFIDENCE";
 
@@ -485,6 +648,7 @@
         } else if (followers.status === "COMPLETE_BUT_LOW_MARGIN" || following.status === "COMPLETE_BUT_LOW_MARGIN") {
             overallReliability = "COMPLETE_BUT_LOW_MARGIN";
         }
+        overallReliability = canonical.verdict.code;
 
         return {
             runId: state.runId,
@@ -496,10 +660,17 @@
             finalDiffPolicy: FINAL_DIFF_POLICY,
             rateLimit: { ...state.rateLimit },
             overallReliability,
+            trustVerdict: canonical.verdict,
             warnings,
             accuracyMode,
             followers,
             following,
+            completion: {
+                followers: canonical.followersCompletion,
+                following: canonical.followingCompletion
+            },
+            followersCompletion: canonical.followersCompletion,
+            followingCompletion: canonical.followingCompletion,
             sources: {
                 devtoolsBridge: getDevtoolsBridgeSnapshot(),
                 pageNetworkBridge: getPageNetworkBridgeSnapshot(),
@@ -535,6 +706,7 @@
             console.log("🧭 정확도 모드:", report.accuracyMode.label);
         }
         console.log("🎯 전체 신뢰도:", report.overallReliability);
+        if (report.trustVerdict) console.log("🚦 최종 판정:", report.trustVerdict.labelKo);
         console.log(`📦 팔로워 검증: ${report.followers.verifiedCount}명 / 화면 표시 ${report.followers.expectedCount || "알 수 없음"}명 / 후보 ${report.followers.candidateCount}명`);
         console.log(`📦 팔로잉 검증: ${report.following.verifiedCount}명 / 화면 표시 ${report.following.expectedCount || "알 수 없음"}명 / 후보 ${report.following.candidateCount}명`);
         const compareCounts = window.__igFollowerResult?.diffs?.compareCounts;
@@ -555,7 +727,7 @@
 
         printDebugReportSummary(report);
         console.log("========== 실행 판단 ==========");
-        if (report.overallReliability === "COMPLETE_HIGH_CONFIDENCE") {
+        if (report.trustVerdict?.code === "CONFIRMED") {
             console.log("✅ 현재 결과는 화면 표시 수와 후보 상태 기준으로 높은 신뢰도입니다.");
         } else {
             console.log("⚠️ 현재 결과는 참고용/partial일 수 있습니다. 아래 경고와 제외 후보를 함께 확인하세요.");
@@ -866,6 +1038,14 @@
             if (!message || message.source !== "ig-page-network-bridge" || message.schemaVersion !== 1) return;
 
             if (message.type === "IG_PAGE_NETWORK_STATUS") {
+                if (
+                    !state.pageNetworkCapability ||
+                    message.capability !== state.pageNetworkCapability ||
+                    message.runId !== state.runId ||
+                    message.profile !== state.runProfile
+                ) {
+                    return;
+                }
                 state.pageNetworkBridge.ready = true;
                 if (/enabled|ready-enabled|already-enabled/.test(message.reason || "")) {
                     state.pageNetworkBridge.enabled = true;
@@ -889,6 +1069,16 @@
                 state.pageNetworkBridge.lastError = "invalid-page-network-payload";
                 return;
             }
+            if (
+                !state.pageNetworkCapability ||
+                message.capability !== state.pageNetworkCapability ||
+                message.runId !== state.runId ||
+                message.profile !== state.runProfile
+            ) {
+                state.pageNetworkBridge.lastError = "page-network-binding-mismatch";
+                recordRunEvent("page_network_payload_rejected", { reason: "binding-mismatch" });
+                return;
+            }
 
             const mode = message.mode === "following" || message.mode === "followers"
                 ? message.mode
@@ -907,33 +1097,37 @@
                 return;
             }
 
-            const isCandidate = message.mode === "active";
-            const source = `${message.transport || "page-network"}${isCandidate ? "-candidate" : ""}`;
-            const beforeConfirmed = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
+            const isAmbiguousNetwork = message.mode === "active";
+            const source = `${message.transport || "page-network"}${isAmbiguousNetwork ? "-candidate" : "-assisted"}`;
             const beforeCandidates = state.candidateUsers[mode].size;
+            const beforeAssisted = state.assistedUsers[mode].size;
 
-            const targetSet = mode === "following" ? state.followingUsers : state.collectedUsers;
             for (const username of message.usernames.slice(0, 2000)) {
-                if (isCandidate) {
+                if (isAmbiguousNetwork) {
                     addCandidateUsername(username, mode, source, "active-page-network");
-                } else {
-                    addUsername(username, targetSet, source, mode);
+                    continue;
                 }
+                const normalized = typeof username === "string" ? username.trim().toLowerCase() : "";
+                if (!USERNAME_RE.test(normalized)) continue;
+                recordUsernameProvenance(normalized, mode, source, {
+                    confidence: "assisted",
+                    reason: "page-network-assisted"
+                });
+                state.assistedUsers[mode].add(normalized);
             }
 
-            const afterConfirmed = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
             const afterCandidates = state.candidateUsers[mode].size;
-            const added = isCandidate ? afterCandidates - beforeCandidates : afterConfirmed - beforeConfirmed;
-            if (!isCandidate && added > 0) {
-                demoteDomOnlyConfirmedUsers(mode, "confirmed-network-payload-arrived");
-            }
+            const added = isAmbiguousNetwork
+                ? afterCandidates - beforeCandidates
+                : state.assistedUsers[mode].size - beforeAssisted;
 
             state.pageNetworkBridge.ready = true;
             state.pageNetworkBridge.payloadCount++;
-            if (isCandidate) {
+            if (isAmbiguousNetwork) {
                 state.pageNetworkBridge.candidatePayloadCount++;
             } else {
                 state.pageNetworkBridge.confirmedPayloadCount++;
+                state.pagination[mode].pageNetworkExactPayloadCount++;
             }
             state.pageNetworkBridge.addedCount += Math.max(added, 0);
             state.pageNetworkBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
@@ -955,6 +1149,15 @@
         window.postMessage({
             source: "ig-follower-content",
             schemaVersion: 1,
+            type: "IG_PAGE_NETWORK_BIND",
+            capability: state.pageNetworkCapability,
+            runId: state.runId,
+            profile: state.runProfile,
+            capturedAt: new Date().toISOString()
+        }, "*");
+        window.postMessage({
+            source: "ig-follower-content",
+            schemaVersion: 1,
             type: "IG_PAGE_NETWORK_PING",
             capturedAt: new Date().toISOString()
         }, "*");
@@ -969,6 +1172,9 @@
                 source: "ig-follower-content",
                 schemaVersion: 1,
                 type: "IG_PAGE_NETWORK_ENABLE",
+                capability: state.pageNetworkCapability,
+                runId: state.runId,
+                profile: state.runProfile,
                 reason,
                 capturedAt: new Date().toISOString()
             }, "*");
@@ -1251,6 +1457,13 @@
                 }
                 if (message.reason === "navigated") {
                     recordRunEvent("devtools_capture_navigated", { at: message.capturedAt || null });
+                    for (const mode of ["followers", "following"]) {
+                        state.pagination[mode].recognized = false;
+                        state.pagination[mode].terminal = false;
+                        state.pagination[mode].hasMore = null;
+                        state.pagination[mode].terminalReason = "devtools_navigated";
+                        state.pagination[mode].exactPayloadCount = 0;
+                    }
                     console.log("🧭 DevTools 캡처 컨텍스트가 페이지 이동으로 초기화되었습니다. 수집 중이었다면 followers/following 목록을 다시 열어 주세요.");
                 }
                 if (message.reason === "rate-limited") {
@@ -1306,6 +1519,25 @@
             let added = 0;
             const usernames = message.usernames.slice(0, 2000);
             const isAmbiguousNetwork = message.mode === "active";
+            if (!isAmbiguousNetwork && (message.status < 200 || message.status >= 300)) {
+                state.devtoolsBridge.lastError = `devtools-http-status-${message.status || 0}`;
+                sendResponse?.({ ok: false, error: state.devtoolsBridge.lastError });
+                return false;
+            }
+            if (!isAmbiguousNetwork && message.pagination?.exactEndpoint === true) {
+                const pagination = state.pagination[mode];
+                pagination.exactPayloadCount++;
+                pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
+                if (message.pagination.recognized === true) {
+                    pagination.recognized = true;
+                    pagination.hasMore = typeof message.pagination.hasMore === "boolean" ? message.pagination.hasMore : null;
+                    pagination.terminal = message.pagination.terminal === true;
+                    pagination.terminalReason = message.pagination.terminalReason || null;
+                }
+            }
+            if (!isAmbiguousNetwork) {
+                demoteDomOnlyConfirmedUsers(mode, "devtools-exact-evidence-arrived");
+            }
             for (const username of usernames) {
                 if (isAmbiguousNetwork) {
                     if (addCandidateUsername(username, mode, "devtools", "active-devtools-network")) {
@@ -1518,11 +1750,26 @@
     }
 
     function extractCountFromLabel(value) {
-        const text = normalizeText(value);
-        const match = text.match(/(\d[\d,]*)/);
-        if (!match) return null;
-        const count = Number(match[1].replace(/,/g, ""));
-        return Number.isFinite(count) ? count : null;
+        const parsed = globalThis.IGAccuracyEngine?.parseDisplayedCount(value);
+        return Number.isSafeInteger(parsed?.value) ? parsed.value : null;
+    }
+
+    function getDisplayedCountEvidence(element) {
+        const candidates = [
+            { text: element?.getAttribute?.("aria-label") || "", source: "aria-label" },
+            { text: element?.getAttribute?.("title") || "", source: "title" },
+            { text: element?.textContent || "", source: "visible-label" },
+            { text: element?.parentElement?.textContent || "", source: "sibling-value" }
+        ].filter((candidate) => candidate.text.trim());
+        const parsed = globalThis.IGAccuracyEngine?.parseDisplayedCount(candidates);
+        if (parsed) return parsed;
+        const value = extractCountFromLabel(element?.textContent || element?.getAttribute?.("aria-label") || "");
+        return { value, exact: Number.isSafeInteger(value), source: "legacy", notation: value === null ? null : String(value), reason: value === null ? "no-safe-count" : "exact-count" };
+    }
+
+    function getExactCollectionTarget(mode) {
+        const evidence = state.expectedCountEvidence[mode];
+        return evidence?.exact === true && Number.isSafeInteger(evidence.value) ? evidence.value : 0;
     }
 
     function isCandidateVisible(el) {
@@ -1976,14 +2223,22 @@
         }
 
         const selectedLabel = normalizeText(element.textContent || element.getAttribute("aria-label") || "");
-        const selectedCount = extractCountFromLabel(selectedLabel);
+        const countEvidence = getDisplayedCountEvidence(element);
+        const selectedCount = countEvidence.value;
+        state.expectedCountEvidence[kind] = countEvidence;
         if (selectedCount !== null) {
             state.expectedCounts[kind] = selectedCount;
         }
 
         console.log(`✅ ${kind} 후보 선택:`, element.tagName, element.getAttribute("href") || "", selectedLabel.slice(0, 60));
         if (selectedCount !== null) {
-            console.log(`🧮 ${kind} 화면 표시 숫자: ${selectedCount}명`);
+            const confidenceLabel = countEvidence.exact ? "정확" : "축약/근사";
+            console.log(`🧮 ${kind} 화면 표시 숫자: ${selectedCount}명 (${confidenceLabel}, ${countEvidence.notation || "표기 없음"})`);
+            if (!countEvidence.exact) {
+                console.log("ℹ️ 축약 표시는 진행 참고용으로만 사용하며 수집 완료 확정 기준으로 사용하지 않습니다.");
+            }
+        } else {
+            console.log(`ℹ️ ${kind} 화면 표시 숫자를 안전하게 해석하지 못했습니다. (${countEvidence.reason || "unknown"})`);
         }
 
         state.activeCollectionMode = kind;
@@ -2883,11 +3138,17 @@
                     `⏳ 현재 ${baseLog} ${currentCount}명 / 목표 ${targetDisplay}명 (DOM 추가: ${beforeDom}, observer 추가: ${observerAdded}, 네트워크 실시간 반영)`
                 );
             }
+            emitRunProgress(modeLabel === "following" ? "collecting_following" : "collecting_followers", "running");
 
-            if (limitLabel > 0 && currentCount >= limitLabel) {
+            const strictCount = getStrictUsers(modeLabel).length;
+            const waitingForDevtoolsCoverage = limitLabel > 0 && isDevtoolsBridgeFresh() && strictCount < limitLabel;
+            if (limitLabel > 0 && currentCount >= limitLabel && !waitingForDevtoolsCoverage) {
                 console.log(`✅ ${baseLog} 목표 달성: ${currentCount}명`);
                 state.lastScrollEndReason = "target_reached";
                 break;
+            }
+            if (limitLabel > 0 && currentCount >= limitLabel && waitingForDevtoolsCoverage && stableTicks === 0) {
+                console.log(`📡 ${baseLog} DOM 수량은 채웠지만 DevTools 확정 수량이 ${strictCount}/${limitLabel}명이어서 목록 끝까지 확인합니다.`);
             }
 
             if (scrollBox.scrollHeight <= scrollBox.clientHeight + 1) {
@@ -3015,26 +3276,55 @@
             followersCount: state.collectedUsers.size,
             followingCount: state.followingUsers.size
         });
-        const rawFollowers = new Set(Array.from(state.collectedUsers).map((u) => u.toLowerCase()));
-        const rawFollowing = new Set(Array.from(state.followingUsers).map((u) => u.toLowerCase()));
+        const rawFollowers = new Set(getAssistedUsers("followers").map((u) => u.toLowerCase()));
+        const rawFollowing = new Set(getAssistedUsers("following").map((u) => u.toLowerCase()));
         const excludedFollowers = getOvercountLowConfidenceExclusions("followers", rawFollowers, rawFollowing, state.expectedCounts.followers || 0);
         const excludedFollowing = getOvercountLowConfidenceExclusions("following", rawFollowing, rawFollowers, state.expectedCounts.following || 0);
-        const followers = new Set(Array.from(rawFollowers).filter((u) => !excludedFollowers.has(u)));
-        const following = new Set(Array.from(rawFollowing).filter((u) => !excludedFollowing.has(u)));
-        const fallbackOnlyFollowers = getFallbackOnlyDiffExclusions(followers, following, state.userProvenance.followers);
-        const fallbackOnlyFollowing = getFallbackOnlyDiffExclusions(following, followers, state.userProvenance.following);
-        fallbackOnlyFollowers.forEach((username) => followers.delete(username));
-        fallbackOnlyFollowing.forEach((username) => following.delete(username));
+        const assistedFollowers = new Set(Array.from(rawFollowers).filter((u) => !excludedFollowers.has(u)));
+        const assistedFollowing = new Set(Array.from(rawFollowing).filter((u) => !excludedFollowing.has(u)));
+        const fallbackOnlyFollowers = getFallbackOnlyDiffExclusions(assistedFollowers, assistedFollowing, state.userProvenance.followers);
+        const fallbackOnlyFollowing = getFallbackOnlyDiffExclusions(assistedFollowing, assistedFollowers, state.userProvenance.following);
+        fallbackOnlyFollowers.forEach((username) => assistedFollowers.delete(username));
+        fallbackOnlyFollowing.forEach((username) => assistedFollowing.delete(username));
 
-        const onlyFollowers = Array.from(followers).filter((u) => !following.has(u)).sort();
-        const onlyFollowing = Array.from(following).filter((u) => !followers.has(u)).sort();
-        const mutualUsers = Array.from(followers).filter((u) => following.has(u)).sort();
+        const strictFollowers = new Set(getStrictUsers("followers"));
+        const strictFollowing = new Set(getStrictUsers("following"));
+        const comparison = globalThis.IGAccuracyEngine?.compareStrictSets({
+            strictFollowers,
+            strictFollowing,
+            assistedFollowers,
+            assistedFollowing
+        });
+        const strictResult = comparison || {
+            followersWithoutMeFollowing: Array.from(strictFollowers).filter((u) => !strictFollowing.has(u)).sort(),
+            iFollowButNotReturned: Array.from(strictFollowing).filter((u) => !strictFollowers.has(u)).sort(),
+            mutualUsers: Array.from(strictFollowers).filter((u) => strictFollowing.has(u)).sort(),
+            mutualCount: Array.from(strictFollowers).filter((u) => strictFollowing.has(u)).length,
+            compareCounts: { followers: strictFollowers.size, following: strictFollowing.size },
+            assistedPreview: {
+                followersWithoutMeFollowing: Array.from(assistedFollowers).filter((u) => !assistedFollowing.has(u)).sort(),
+                iFollowButNotReturned: Array.from(assistedFollowing).filter((u) => !assistedFollowers.has(u)).sort(),
+                mutualUsers: Array.from(assistedFollowers).filter((u) => assistedFollowing.has(u)).sort(),
+                mutualCount: Array.from(assistedFollowers).filter((u) => assistedFollowing.has(u)).length,
+                compareCounts: { followers: assistedFollowers.size, following: assistedFollowing.size }
+            }
+        };
+        const assistedPreview = {
+            ...strictResult.assistedPreview,
+            mutualSample: (strictResult.assistedPreview?.mutualUsers || []).slice(0, 20)
+        };
+        assistedPreview.integrity = getCompareIntegrity(
+            assistedPreview,
+            assistedPreview.compareCounts.followers,
+            assistedPreview.compareCounts.following
+        );
         const diffs = {
             basis: FINAL_DIFF_POLICY,
-            followersWithoutMeFollowing: onlyFollowers,
-            iFollowButNotReturned: onlyFollowing,
-            mutualCount: mutualUsers.length,
-            mutualSample: mutualUsers.slice(0, 20),
+            followersWithoutMeFollowing: strictResult.followersWithoutMeFollowing,
+            iFollowButNotReturned: strictResult.iFollowButNotReturned,
+            mutualCount: strictResult.mutualCount,
+            mutualSample: (strictResult.mutualUsers || []).slice(0, 20),
+            assistedPreview,
             excludedFromCompare: {
                 followersOvercountLowConfidence: Array.from(excludedFollowers).sort(),
                 followingOvercountLowConfidence: Array.from(excludedFollowing).sort(),
@@ -3047,13 +3337,19 @@
                 followers: rawFollowers.size,
                 following: rawFollowing.size
             },
-            compareCounts: {
-                followers: followers.size,
-                following: following.size
-            }
+            strictCounts: {
+                followers: strictFollowers.size,
+                following: strictFollowing.size
+            },
+            assistedCounts: {
+                followers: assistedFollowers.size,
+                following: assistedFollowing.size
+            },
+            compareCounts: strictResult.compareCounts,
+            usedStrictCompare: true
         };
 
-        diffs.integrity = getCompareIntegrity(diffs, followers.size, following.size);
+        diffs.integrity = getCompareIntegrity(diffs, strictFollowers.size, strictFollowing.size);
         diffs.calculationStatus = diffs.integrity.ok ? "passed" : "failed_integrity_check";
         return diffs;
     }
@@ -3217,8 +3513,12 @@
     }
 
     function getListCompletionAssessment(mode, expectedCount) {
-        const verifiedCount = mode === "following" ? state.followingUsers.size : state.collectedUsers.size;
-        const endReason = mode === "following" ? state.lastFollowingScrollEndReason : state.lastFollowersScrollEndReason;
+        const engine = globalThis.IGAccuracyEngine;
+        const confirmedCount = getStrictUsers(mode).length;
+        const assistedTotalCount = getAssistedUsers(mode).length;
+        const modeEndReason = mode === "following" ? state.lastFollowingScrollEndReason : state.lastFollowersScrollEndReason;
+        const globallyUnsafeEndReasons = new Set(["rate_limited", "time_cap_reached", "profile_changed", "scroll_box_detached", "modal_closed", "run_superseded"]);
+        const endReason = globallyUnsafeEndReasons.has(state.lastScrollEndReason) ? state.lastScrollEndReason : modeEndReason;
         const domTierCandidateFilter = (username) => {
             const sources = Array.from(state.userProvenance[mode]?.get(username)?.sources || []);
             return sources.length > 0 && sources.every((source) => DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source));
@@ -3226,16 +3526,75 @@
         const candidates = getUnconfirmedCandidates(mode);
         const domTierCandidates = candidates.filter(domTierCandidateFilter).sort();
         const nonDomCandidateCount = candidates.length - domTierCandidates.length;
+        const repeatedDomCandidates = domTierCandidates.filter((username) => {
+            const sourceSeenCounts = state.userProvenance[mode]?.get(username)?.sourceSeenCounts || {};
+            return Object.entries(sourceSeenCounts)
+                .filter(([source]) => DOM_TIER_SOURCES.has(source) || DOM_CANDIDATE_SOURCES.has(source))
+                .reduce((total, [, count]) => total + Number(count || 0), 0) >= 2;
+        });
+        const safeDomEnd = endReason === "stalled_at_list_end" || endReason === "target_reached";
+        const sourceCounts = getSourceCounts(mode);
+        const devtoolsCandidateCount = candidates.filter((username) => state.userProvenance[mode]?.get(username)?.sources?.has("DevTools")).length;
+        const completion = engine?.assessListCompletion({
+            expectedCount: state.expectedCountEvidence[mode] || expectedCount || null,
+            confirmedCount,
+            assistedTotalCount,
+            assistedCount: Math.max(0, assistedTotalCount - confirmedCount),
+            nonDomCandidateCount,
+            domCandidateCount: domTierCandidates.length,
+            repeatDomCandidateCount: repeatedDomCandidates.length,
+            correctlyIdentifiedDomCandidateCount: safeDomEnd ? domTierCandidates.length : 0,
+            devtoolsConnected: isDevtoolsBridgeFresh(),
+            devtoolsExactPayloadCount: state.pagination[mode].exactPayloadCount,
+            devtoolsCandidatePayloadCount: devtoolsCandidateCount,
+            pageNetworkExactPayloadCount: state.pagination[mode].pageNetworkExactPayloadCount,
+            pageNetworkCandidatePayloadCount: state.pageNetworkBridge.candidatePayloadCount,
+            domEvidenceCount: (sourceCounts.DOM || 0) + (sourceCounts["dom-observer"] || 0),
+            pagination: {
+                paginationRecognized: state.pagination[mode].recognized,
+                hasMore: state.pagination[mode].hasMore,
+                terminal: state.pagination[mode].terminal,
+                terminalReason: state.pagination[mode].terminalReason
+            },
+            domEndObserved: safeDomEnd,
+            endReason,
+            integrityOk: true,
+            smallGapTolerance: DISPLAYED_COUNT_GAP_TOLERANCE
+        }) || {
+            state: "PARTIAL",
+            complete: false,
+            strictComplete: false,
+            gap: Number(expectedCount || 0) - confirmedCount,
+            fallbackAllowed: false,
+            maxAssistedPromotions: 0,
+            fallbackBlockReasons: ["accuracy-engine-unavailable"],
+            reasons: ["accuracy-engine-unavailable"]
+        };
         return {
-            ...assessListCompletion({
-                expectedCount: expectedCount || 0,
-                verifiedCount,
-                endReason,
-                hasNetworkEvidence: hasConfirmedNetworkEvidence(mode),
-                nonDomCandidateCount
-            }),
+            ...completion,
+            verifiedCount: confirmedCount,
+            listEndConfirmed: safeDomEnd,
+            completeAtListEnd: completion.state === "CONFIRMED_NETWORK_END",
             domTierCandidates: domTierCandidates.slice(0, 20)
         };
+    }
+
+    function buildCanonicalTrustSnapshot(diffs = null) {
+        const followersCompletion = getListCompletionAssessment("followers", state.expectedCounts.followers || 0);
+        const followingCompletion = getListCompletionAssessment("following", state.expectedCounts.following || 0);
+        const integrityOk = diffs?.integrity ? diffs.integrity.ok === true : undefined;
+        const verdict = globalThis.IGAccuracyEngine?.buildTrustVerdict({
+            followersCompletion,
+            followingCompletion,
+            integrityOk
+        }) || {
+            code: "PARTIAL",
+            labelKo: "부분 결과",
+            severity: "warning",
+            reasons: ["accuracy_engine_unavailable"],
+            recommendedActionKo: "확장 프로그램을 다시 로드한 뒤 재실행하세요."
+        };
+        return { followersCompletion, followingCompletion, verdict };
     }
 
     function printCandidateUsers() {
@@ -3293,22 +3652,14 @@
         const devtools = getDevtoolsListStatus();
         const pageBridge = getPageNetworkBridgeSnapshot();
         const accuracyMode = getAccuracyMode(summary);
-        const compareCounts = diffs.compareCounts || {};
-        const expectedFollowers = summary.expectedFollowersCount || state.expectedCounts.followers || 0;
-        const expectedFollowing = summary.expectedFollowingCount || state.expectedCounts.following || 0;
-        const followersMatch = !expectedFollowers || compareCounts.followers === expectedFollowers || summary.followersCompletion?.completeAtListEnd === true;
-        const followingMatch = !expectedFollowing || compareCounts.following === expectedFollowing || summary.followingCompletion?.completeAtListEnd === true;
-        let trustGate = "참고용 결과";
-        if (diffs.integrity && !diffs.integrity.ok) {
-            trustGate = "계산 무결성 확인 필요";
-        } else if (accuracyMode.status === "DEVTOOLS_CONNECTED_NO_PAYLOAD" || accuracyMode.status === "DOM_PREVIEW") {
-            trustGate = "DevTools 재실행 필요";
-        } else if ((accuracyMode.status === "DEVTOOLS_ASSISTED" || accuracyMode.status === "PAGE_NETWORK_ASSISTED") && followersMatch && followingMatch) {
-            trustGate = "확정 비교 가능";
-        }
+        const canonical = buildCanonicalTrustSnapshot(summary.diffs || null);
+        summary.followersCompletion = canonical.followersCompletion;
+        summary.followingCompletion = canonical.followingCompletion;
+        summary.trustVerdict = canonical.verdict;
 
         console.log("========== Instagram 비교 결과 ==========");
-        console.log("판정:", trustGate);
+        console.log("판정:", canonical.verdict.labelKo);
+        console.log("판정 근거:", canonical.verdict.reasons.join(", "));
         console.log("정확도 모드:", accuracyMode.label);
         console.log("상태:", summary.status || "unknown");
         console.log(`팔로워: ${summary.followersCount ?? 0} / 예상 ${summary.expectedFollowersCount || "알 수 없음"}`);
@@ -3480,7 +3831,13 @@
             snapshots: payload.snapshots,
             candidates: payload.candidates,
             diffs: payload.diffs,
+            trustVerdict: payload.trustVerdict,
+            completion: payload.completion,
+            followersCompletion: payload.followersCompletion,
+            followingCompletion: payload.followingCompletion,
             expectedCounts: payload.expectedCounts,
+            expectedCountEvidence: payload.expectedCountEvidence,
+            pagination: payload.pagination,
             scroll: {
                 followersEndReason: payload.scroll?.followersEndReason || null,
                 followersDiagnostics: (payload.scroll?.followersDiagnostics || []).slice(-5),
@@ -3535,6 +3892,7 @@
             hasDiffs: !!diffs
         });
         const accuracyMode = getAccuracyMode({ status: diffs ? "compared" : "collected" });
+        const canonical = buildCanonicalTrustSnapshot(diffs);
         const profile = state.runProfile || getProfileKey();
         const payload = {
             profile,
@@ -3545,6 +3903,13 @@
             followActionEnabled: FOLLOW_ACTION_ENABLED,
             finalDiffPolicy: FINAL_DIFF_POLICY,
             accuracyMode,
+            trustVerdict: canonical.verdict,
+            completion: {
+                followers: canonical.followersCompletion,
+                following: canonical.followingCompletion
+            },
+            followersCompletion: canonical.followersCompletion,
+            followingCompletion: canonical.followingCompletion,
             followers: followers,
             following: Array.from(state.followingUsers),
             snapshots: {
@@ -3576,6 +3941,14 @@
                 followers: state.expectedCounts.followers,
                 following: state.expectedCounts.following
             },
+            expectedCountEvidence: {
+                followers: state.expectedCountEvidence.followers,
+                following: state.expectedCountEvidence.following
+            },
+            pagination: {
+                followers: { ...state.pagination.followers },
+                following: { ...state.pagination.following }
+            },
             scroll: {
                 followersEndReason: state.lastFollowersScrollEndReason,
                 followersDiagnostics: state.lastFollowersScrollDiagnostics.slice(-20),
@@ -3588,7 +3961,7 @@
                 users: Array.from(state.followedUsers)
             }
         };
-        payload.debugReport = buildDebugReport({ status: diffs ? "compared" : "collected" });
+        payload.debugReport = buildDebugReport({ status: diffs ? "compared" : "collected", diffs });
 
         const key = getStorageKey();
         const store = window.__igFollowerMemory || {};
@@ -3604,6 +3977,7 @@
         console.log("👤 대상 프로필:", payload.profile);
         console.log("📅 저장 시각:", payload.collectedAt);
         console.log("🧭 정확도 모드:", payload.accuracyMode.label);
+        console.log("🚦 최종 판정:", payload.trustVerdict.labelKo);
         console.log(`📦 저장된 raw 팔로워/팔로잉: ${payload.followers.length}명 / ${payload.following.length}명`);
         if (payload.diffs?.compareCounts) {
             console.log(`📌 final diff 계산 기준: 팔로워 ${payload.diffs.compareCounts.followers}명 / 팔로잉 ${payload.diffs.compareCounts.following}명`);
@@ -3780,8 +4154,11 @@
         window.__igFollowerActiveRunId = state.runId;
         summary.runId = state.runId;
         state.runProfile = getProfileKey();
+        state.pageNetworkCapability = createRunCapability();
         state.collectedUsers.clear();
         state.followingUsers.clear();
+        state.assistedUsers.followers.clear();
+        state.assistedUsers.following.clear();
         state.followedUsers.clear();
         state.followButtonsClicked = 0;
         state.followersScrollBox = null;
@@ -3792,6 +4169,22 @@
         state.sourceCountsCache.following = Object.create(null);
         state.candidateUsers.followers.clear();
         state.candidateUsers.following.clear();
+        state.expectedCounts.followers = null;
+        state.expectedCounts.following = null;
+        state.expectedCountEvidence.followers = null;
+        state.expectedCountEvidence.following = null;
+        for (const mode of ["followers", "following"]) {
+            state.pagination[mode] = {
+                recognized: false,
+                terminal: false,
+                hasMore: null,
+                terminalReason: null,
+                exactPayloadCount: 0,
+                pageNetworkExactPayloadCount: 0,
+                lastCapturedAt: null
+            };
+        }
+        state.lastProgressSentAtMs = 0;
         state.scrollRecovery.followers = [];
         state.scrollRecovery.following = [];
         state.lastFollowersScrollEndReason = null;
@@ -3826,6 +4219,7 @@
         state.runTimeline = [];
         window.__igFollowerRunStartedAt = summary.startedAt;
         recordRunEvent("run_started", { runId: state.runId, startedAt: summary.startedAt });
+        emitRunProgress("starting", "running", summary, { force: true });
 
         const isExtensionContentScript = typeof chrome !== "undefined" && Boolean(chrome.runtime?.onMessage);
         window.__igFollowerIngestApiResponse = ingestApiResponse;
@@ -3838,9 +4232,11 @@
         installPageNetworkBridgeListener();
         summary.accuracyPreflight = await runAccuracyPreflight(summary);
         printAccuracyModeNotice(summary, "실행 시작");
+        emitRunProgress("preflight", "running", summary, { force: true });
 
         console.log("%c1) 네트워크 감시 후크 설치 + 실행 시작", "color: #ff8c00; font-size: 1.1em;");
         recordRunEvent("open_followers_start", { mode: "followers" });
+        emitRunProgress("opening_followers", "running", summary, { force: true });
         const openedFollowers = await openPopupByType("followers");
         recordRunEvent("open_followers_end", { mode: "followers", ok: openedFollowers });
         summary.openedFollowers = openedFollowers;
@@ -3861,17 +4257,18 @@
         await wait(700, 300);
         if (finalizeIfProfileChanged(summary)) return;
         console.log("3) 팔로워 이중 수집 시작...");
-        const followersTarget = state.expectedCounts.followers || 0;
+        emitRunProgress("collecting_followers", "running", summary, { force: true });
+        const followersTarget = getExactCollectionTarget("followers");
         console.log(`🎯 팔로워 목표 기준: 화면 표시 ${state.expectedCounts.followers || "없음"}명, 실제 목표 ${followersTarget > 0 ? `${followersTarget}명` : "전체(정체 시 종료)"}`);
         let followers = await scrollUntilEnd(followersTarget, state.collectedUsers, "followers", { saveScrollBoxForFollow: true });
         let followersCompletion = null;
         if (followersTarget > 0 && followers.length < followersTarget) {
             followersCompletion = getListCompletionAssessment("followers", followersTarget);
-            if (followersCompletion.completeAtListEnd) {
+            if (followersCompletion.complete) {
                 summary.followersCompletion = followersCompletion;
-                summary.followersCollectionStatus = "complete_at_list_end";
+                summary.followersCollectionStatus = followersCompletion.strictComplete ? "complete_at_list_end" : "assisted_complete";
                 recordRunEvent("list_end_confirmed_below_displayed", { mode: "followers", ...followersCompletion });
-                console.log(`📋 팔로워 목록 끝 도달 확인: 화면 표시 ${followersTarget}명 중 ${followers.length}명 수집. 차이 ${followersCompletion.gap}명은 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정됩니다.`);
+                console.log(`📋 팔로워 목록 종료 판정: ${followersCompletion.state} (화면 표시 ${followersTarget}명 / 수집 ${followers.length}명)`);
                 if (followersCompletion.gap > 0 && followersCompletion.domTierCandidates.length === followersCompletion.gap) {
                     console.log(`🔎 격차 ${followersCompletion.gap}명과 DOM 후보 ${followersCompletion.domTierCandidates.length}명이 일치합니다: ${followersCompletion.domTierCandidates.slice(0, 10).join(", ")}`);
                     console.log("ℹ️ 이 후보들은 화면 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)일 가능성이 높습니다. __igFollowerExplainUser(\"username\") 으로 개별 확인할 수 있습니다.");
@@ -3880,6 +4277,10 @@
                 console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
             } else {
                 summary.followersReverify = await reverifyCurrentListCollection(followersTarget, state.collectedUsers, "followers");
+                if (!summary.followersReverify.ok) {
+                    state.lastScrollEndReason = summary.followersReverify.reason;
+                    state.lastFollowersScrollEndReason = summary.followersReverify.reason;
+                }
                 promoteDomCandidatesToConfirmed("followers", state.collectedUsers, followersTarget, "followers-reverify-shortfall");
                 followers = Array.from(state.collectedUsers);
             }
@@ -3891,7 +4292,7 @@
         summary.followersScrollDiagnostics = state.lastFollowersScrollDiagnostics.slice(-20);
         summary.followersScrollRecovery = state.scrollRecovery.followers.slice(-20);
 
-        if (followersTarget > 0 && followers.length < followersTarget && !followersCompletion?.completeAtListEnd) {
+        if (followersTarget > 0 && followers.length < followersTarget && !followersCompletion?.complete) {
             summary.status = "collection_incomplete";
             summary.followersCollectionStatus = "incomplete";
             summary.lastError = `팔로워 수집이 목표 ${followersTarget}명보다 낮은 ${followers.length}명에서 종료되었습니다. 팔로우 단계는 실행하지 않습니다.`;
@@ -3945,6 +4346,7 @@
         if (finalizeIfProfileChanged(summary)) return;
 
         console.log("6) 팔로잉 목록 열기...");
+        emitRunProgress("opening_following", "running", summary, { force: true });
         recordRunEvent("open_following_start", { mode: "following" });
         const openedFollowing = await openPopupByType("following");
         recordRunEvent("open_following_end", { mode: "following", ok: openedFollowing });
@@ -3969,16 +4371,17 @@
         await wait(500, 200);
         if (finalizeIfProfileChanged(summary)) return;
         console.log("7) 팔로잉 목록 수집 시작...");
-        const followingTarget = state.expectedCounts.following || 0;
+        emitRunProgress("collecting_following", "running", summary, { force: true });
+        const followingTarget = getExactCollectionTarget("following");
         let following = await scrollUntilEnd(followingTarget, state.followingUsers, "following");
         let followingCompletion = null;
         if (followingTarget > 0 && following.length < followingTarget) {
             followingCompletion = getListCompletionAssessment("following", followingTarget);
-            if (followingCompletion.completeAtListEnd) {
+            if (followingCompletion.complete) {
                 summary.followingCompletion = followingCompletion;
-                summary.followingCollectionStatus = "complete_at_list_end";
+                summary.followingCollectionStatus = followingCompletion.strictComplete ? "complete_at_list_end" : "assisted_complete";
                 recordRunEvent("list_end_confirmed_below_displayed", { mode: "following", ...followingCompletion });
-                console.log(`📋 팔로잉 목록 끝 도달 확인: 화면 표시 ${followingTarget}명 중 ${following.length}명 수집. 차이 ${followingCompletion.gap}명은 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)이 있는 경우로 추정됩니다.`);
+                console.log(`📋 팔로잉 목록 종료 판정: ${followingCompletion.state} (화면 표시 ${followingTarget}명 / 수집 ${following.length}명)`);
                 if (followingCompletion.gap > 0 && followingCompletion.domTierCandidates.length === followingCompletion.gap) {
                     console.log(`🔎 격차 ${followingCompletion.gap}명과 DOM 후보 ${followingCompletion.domTierCandidates.length}명이 일치합니다: ${followingCompletion.domTierCandidates.slice(0, 10).join(", ")}`);
                     console.log("ℹ️ 이 후보들은 화면 카운터에는 포함되지만 목록 API가 반환하지 않는 계정(최근 언팔 캐시/제한/비활성 등)일 가능성이 높습니다. __igFollowerExplainUser(\"username\") 으로 개별 확인할 수 있습니다.");
@@ -3987,6 +4390,10 @@
                 console.log("ℹ️ 목록 끝이 확인되어 재검증과 DOM 후보 승격을 생략합니다. (허위 diff 방지)");
             } else {
                 summary.followingReverify = await reverifyCurrentListCollection(followingTarget, state.followingUsers, "following");
+                if (!summary.followingReverify.ok) {
+                    state.lastScrollEndReason = summary.followingReverify.reason;
+                    state.lastFollowingScrollEndReason = summary.followingReverify.reason;
+                }
                 promoteDomCandidatesToConfirmed("following", state.followingUsers, followingTarget, "following-reverify-shortfall");
                 following = Array.from(state.followingUsers);
             }
@@ -3997,7 +4404,7 @@
         summary.followingScrollEndReason = state.lastFollowingScrollEndReason;
         summary.followingScrollDiagnostics = state.lastFollowingScrollDiagnostics.slice(-20);
         summary.followingScrollRecovery = state.scrollRecovery.following.slice(-20);
-        if (followingTarget > 0 && following.length < followingTarget && !followingCompletion?.completeAtListEnd) {
+        if (followingTarget > 0 && following.length < followingTarget && !followingCompletion?.complete) {
             summary.followingCollectionStatus = "count_mismatch";
             summary.status = "completed_with_count_mismatch";
             summary.lastError = `팔로잉 목록이 ${followingTarget}명 중 ${following.length}명만 수집되어 맞팔 비교 결과에 오탐이 포함될 수 있습니다.`;
@@ -4035,7 +4442,7 @@
         summary.accuracyMode = getAccuracyMode(summary);
         const excludedFromCompareCount = (diffs.excludedFromCompare?.followersOvercountLowConfidence?.length || 0) +
             (diffs.excludedFromCompare?.followingOvercountLowConfidence?.length || 0);
-        const hasListEndCompletion = Boolean(summary.followersCompletion?.completeAtListEnd || summary.followingCompletion?.completeAtListEnd);
+        const hasListEndCompletion = Boolean(summary.followersCompletion?.complete || summary.followingCompletion?.complete);
         if (summary.accuracyMode.status === "DOM_PREVIEW") {
             summary.status = excludedFromCompareCount > 0 ? "completed_dom_preview_with_overcount_exclusions" : "completed_dom_preview";
         } else if (excludedFromCompareCount > 0) {
@@ -4071,6 +4478,7 @@
             if (window.__igFollowerActiveRunId === state.runId) {
                 window.__igFollowerRunInProgress = false;
             }
+            emitRunProgress("finished", summary.status || "unknown", summary, { force: true });
         }
     }
 

@@ -81,6 +81,13 @@
     return "unknown";
   }
 
+  function getSafeEndpointLabel(mode) {
+    if (mode === "followers" || mode === "following") {
+      return `instagram:endpoint:${mode}`;
+    }
+    return "instagram:network:candidate";
+  }
+
   function looksLikeJsonUserPayload(text) {
     if (!text || typeof text !== "string") return false;
     const trimmed = text.trim();
@@ -261,7 +268,9 @@
 
     const usernames = new Set();
     collectUsernamesFromPayload(parsed, usernames);
-    if (usernames.size === 0) {
+    const paginationEvidence = globalThis.IGAccuracyEngine?.extractPaginationEvidence(parsed) || null;
+    const exactEndpoint = mode === "followers" || mode === "following";
+    if (usernames.size === 0 && !(exactEndpoint && paginationEvidence?.paginationRecognized)) {
       stats.ignored++;
       return;
     }
@@ -269,12 +278,19 @@
     stats.sent++;
     stats.lastCaptureAt = new Date().toISOString();
     postToBackground("IG_DEVTOOLS_USERNAMES", {
-      url,
-      method: request.request.method || "",
+      endpoint: getSafeEndpointLabel(mode),
       status: request.response.status || 0,
       mimeType: request.response.content?.mimeType || request.response.mimeType || "",
       usernames: Array.from(usernames),
-      mode
+      mode,
+      pagination: paginationEvidence ? {
+        exactEndpoint,
+        itemCount: paginationEvidence.itemCount,
+        recognized: paginationEvidence.paginationRecognized,
+        hasMore: paginationEvidence.hasMore,
+        terminal: paginationEvidence.terminal,
+        terminalReason: paginationEvidence.terminalReason
+      } : null
     });
     console.log("[IG DevTools] captured JSON response:", getSafeUrlLabel(url), usernames.size, getStatsSnapshot());
   }
@@ -337,4 +353,6 @@
   }
   scheduleReadyHeartbeat();
   scheduleStatusHeartbeat();
+
+  chrome.devtools.panels.create("IG Comparator", "", "devtools-panel.html");
 }

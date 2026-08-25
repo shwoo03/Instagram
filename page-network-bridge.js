@@ -16,6 +16,11 @@
   } else {
     window.__igFollowerPageNetworkBridgeInstalled = true;
     let hooksInstalled = false;
+    let activeBinding = {
+      capability: "",
+      runId: "",
+      profile: ""
+    };
 
     function getRequestUrl(input) {
       if (typeof input === "string") return input;
@@ -26,6 +31,9 @@
     function postStatus(reason, extra = {}) {
       window.postMessage({
         ...extra,
+        runId: activeBinding.runId,
+        profile: activeBinding.profile,
+        capability: activeBinding.capability,
         source: BRIDGE_SOURCE,
         schemaVersion: 1,
         type: "IG_PAGE_NETWORK_STATUS",
@@ -38,10 +46,26 @@
       if (event.source !== window) return;
       const message = event.data;
       if (!message || message.source !== "ig-follower-content" || message.schemaVersion !== 1) return;
+      if (message.type === "IG_PAGE_NETWORK_BIND") {
+        const capability = typeof message.capability === "string" ? message.capability : "";
+        const runId = typeof message.runId === "string" ? message.runId : "";
+        const profile = typeof message.profile === "string" ? message.profile : "";
+        if (!capability || !runId || !profile) {
+          postStatus("binding-rejected");
+          return;
+        }
+        activeBinding = { capability, runId, profile };
+        postStatus("binding-ready", { hooksInstalled });
+        return;
+      }
       if (message.type === "IG_PAGE_NETWORK_PING") {
         postStatus(hooksInstalled ? "ready-enabled" : "ready-passive", { hooksInstalled });
       }
       if (message.type === "IG_PAGE_NETWORK_ENABLE") {
+        if (!activeBinding.capability || message.capability !== activeBinding.capability || message.runId !== activeBinding.runId) {
+          postStatus("enable-rejected-binding-mismatch");
+          return;
+        }
         installHooks();
       }
     });
@@ -149,6 +173,9 @@
         source: BRIDGE_SOURCE,
         schemaVersion: 1,
         type: "IG_PAGE_NETWORK_USERNAMES",
+        runId: activeBinding.runId,
+        profile: activeBinding.profile,
+        capability: activeBinding.capability,
         url: getSafeUrlLabel(url),
         transport,
         mode: detectMode(url),

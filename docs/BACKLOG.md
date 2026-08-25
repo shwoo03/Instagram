@@ -116,3 +116,15 @@ Notes on prior 2026-06-07 open items:
 - Done: B2 adds DOM-tier candidate correlation diagnostics for confirmed list-end gaps and replaces the old inactive/deleted wording with the more precise "counter includes accounts the list API did not return" explanation.
 - Done: B3 fixes dynamic Korean subject particles so labels print as `팔로잉이` and `팔로워가` in reliability warnings.
 - Open: manually verify the post-run payload gate by scrolling the modal after completion and checking that the ignore notice prints once, result lengths stay unchanged, and `postRunIgnoredPayloadCount` increments.
+
+## 2026-08-25 Accuracy Engine and Hybrid UI
+
+- Done: add a pure canonical accuracy engine with exact/approximate count parsing, conservative pagination, fallback gates, trust verdicts, strict/assisted comparison, and integrity fixtures.
+- Done: keep strict final diff separate from DOM/page-network `assistedPreview` output.
+- Done: add a responsive popup for start/progress/summary and a responsive DevTools diagnostics panel.
+- Done: bind page-network messages to the active run and reject stale/forged status and username messages.
+- Done: sanitize DevTools endpoint metadata, require 2xx exact payloads, and retain empty terminal pages as pagination evidence.
+- Done: repair the Puppeteer harness CSP/isolated-world assumptions; all six e2e scenarios now pass locally.
+- Open: reload version 1.2.0 in the user's installed unpacked extension and run one real DevTools-open and one DevTools-closed Instagram check.
+- Open: add `chrome.storage.session.getBytesInUse()` as an actual usage metric separate from the conservative JSON byte estimate.
+- Deferred by user choice: official Instagram export import/download workflow.
