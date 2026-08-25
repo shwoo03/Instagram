@@ -12,7 +12,8 @@
       "startButtonLabel", "connectionDot", "connectionLabel", "connectionDescription",
       "resultsSection", "integrityBadge", "followersCount", "followingCount", "mutualCount",
       "followingOnlyCount", "followersOnlyCount", "candidateCount", "warningSection",
-      "warningList", "liveStatus", "errorStatus"
+      "warningList", "accountDetailsSection", "accountSetBadge", "accountDetailHost",
+      "liveStatus", "errorStatus"
     ].map((id) => [id, document.getElementById(id)])
   );
 
@@ -65,6 +66,7 @@
         followersOnly: safeNumber(counts.followersOnly),
         followingOnly: safeNumber(counts.followingOnly)
       },
+      accounts: globalThis.IGAccountListContract?.sanitizeAccounts(record.accounts) || null,
       sources: {
         devtoolsReady: sources.devtoolsReady === true,
         debuggerReady: sources.debuggerReady === true,
@@ -215,6 +217,21 @@
     }));
   }
 
+  function renderAccountDetails(record, state) {
+    const visible = Boolean(record?.accounts) && ["confirmed", "reference", "partial", "retry", "superseded"].includes(state);
+    elements.accountDetailsSection.hidden = !visible;
+    if (!visible) {
+      elements.accountDetailHost.replaceChildren();
+      return;
+    }
+    const rendered = globalThis.IGAccountListUI?.render({
+      container: elements.accountDetailHost,
+      badge: elements.accountSetBadge,
+      accounts: record.accounts
+    });
+    elements.accountDetailsSection.hidden = !rendered;
+  }
+
   function renderButton(state) {
     const runnable = ui.validInstagramTab && state !== "running";
     elements.startButton.disabled = !runnable;
@@ -230,6 +247,7 @@
     renderProgress(state, record);
     renderConnection(record);
     renderResults(state, record);
+    renderAccountDetails(record, state);
     renderWarnings(record, state);
     renderButton(state);
   }

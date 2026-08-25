@@ -159,6 +159,7 @@ input {
 .hero-card,
 .connection-card,
 .results-section,
+.account-details-section,
 .message-card,
 .devtools-hint,
 .privacy-notice {
@@ -350,6 +351,7 @@ button:focus-visible {
 
 .connection-card,
 .results-section,
+.account-details-section,
 .message-card {
   padding: 15px;
 }
@@ -541,9 +543,10 @@ button:focus-visible {
   }
 
   .hero-card,
-  .connection-card,
-  .results-section,
-  .message-card {
+    .connection-card,
+    .results-section,
+    .account-details-section,
+    .message-card {
     border-radius: 16px;
   }
 

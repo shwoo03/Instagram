@@ -20,6 +20,7 @@
     "followingAssisted", "followingCandidates", "followingPagination", "mutualCount",
     "followingOnlyCount", "followersOnlyCount", "devtoolsStatus", "debuggerStatus", "pageNetworkStatus",
     "domStatus", "stageStatus", "runStatus", "emptyWarnings", "warningList",
+    "accountDetailsSection", "accountSetBadge", "accountDetailHost",
     "timelineList", "liveStatus", "errorStatus"
   ];
   const elements = Object.fromEntries(elementIds.map((id) => [id, document.getElementById(id)]));
@@ -93,6 +94,7 @@
         followersOnly: safeNumber(counts.followersOnly),
         followingOnly: safeNumber(counts.followingOnly)
       },
+      accounts: globalThis.IGAccountListContract?.sanitizeAccounts(record.accounts) || null,
       sources: {
         devtoolsReady: sources.devtoolsReady === true,
         debuggerReady: sources.debuggerReady === true,
@@ -231,6 +233,21 @@
     }));
   }
 
+  function renderAccountDetails(record, state) {
+    const visible = Boolean(record?.accounts) && ["confirmed", "reference", "partial", "retry", "superseded"].includes(state);
+    elements.accountDetailsSection.hidden = !visible;
+    if (!visible) {
+      elements.accountDetailHost.replaceChildren();
+      return;
+    }
+    const rendered = globalThis.IGAccountListUI?.render({
+      container: elements.accountDetailHost,
+      badge: elements.accountSetBadge,
+      accounts: record.accounts
+    });
+    elements.accountDetailsSection.hidden = !rendered;
+  }
+
   function renderTimeline(record) {
     let timeline = record?.timeline || [];
     if (timeline.length === 0 && record?.updatedAt) {
@@ -286,6 +303,7 @@
     const state = deriveState(record);
     renderVerdict(state, record);
     renderCounts(state, record);
+    renderAccountDetails(record, state);
     renderDiagnostics(record);
     renderWarnings(record, state);
     renderTimeline(record);

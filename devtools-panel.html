@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>IG Comparator 진단</title>
   <link rel="stylesheet" href="devtools-panel.css">
+  <link rel="stylesheet" href="account-list-ui.css">
 </head>
 <body>
   <main class="panel-shell">
@@ -101,6 +102,17 @@
       <p class="metric-footnote">후보 계정은 확정 집합과 맞팔 계산에 포함하지 않습니다.</p>
     </section>
 
+    <section id="accountDetailsSection" class="dashboard-section account-details-section" aria-labelledby="accountDetailsTitle" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ACCOUNT DETAILS</p>
+          <h2 id="accountDetailsTitle">계정 상세</h2>
+        </div>
+        <span id="accountSetBadge" class="badge" data-tone="neutral">확인 중</span>
+      </div>
+      <div id="accountDetailHost" class="account-detail-host"></div>
+    </section>
+
     <div class="diagnostic-grid">
       <section class="dashboard-section" aria-labelledby="evidenceTitle">
         <div class="section-heading">
@@ -148,13 +160,15 @@
       <span aria-hidden="true">✓</span>
       <div>
         <strong id="privacyTitle">개인정보를 줄인 진단 화면</strong>
-        <p>파생 사용자명, 수량, 시각, 증거 유형과 진단 정보만 브라우저 세션에 저장합니다. 이 화면과 복사 진단에는 사용자명·프로필 식별자·원본 URL·응답 본문을 포함하지 않습니다. 쿠키, 인증 헤더, DM도 저장하지 않습니다.</p>
+        <p>이 화면에는 비교에 사용된 파생 사용자명만 표시합니다. 진단 복사에는 사용자명을 제외하며, 원본 URL·응답 본문·쿠키·인증 헤더·DM은 저장하거나 표시하지 않습니다.</p>
       </div>
     </aside>
 
     <p id="liveStatus" class="sr-only" aria-live="polite"></p>
     <p id="errorStatus" class="sr-only" role="alert"></p>
   </main>
+  <script src="account-list-contract.js"></script>
+  <script src="account-list-ui.js"></script>
   <script src="devtools-panel.js"></script>
 </body>
 </html>

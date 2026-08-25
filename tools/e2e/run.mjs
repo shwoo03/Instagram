@@ -57,6 +57,21 @@ async function getFixtureTabId(browser) {
   return tabId;
 }
 
+async function waitForRunProgress(browser, tabId, timeoutMs = 10000) {
+  const worker = await getWorker(browser);
+  const key = `ig_run_progress:tab:${tabId}`;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = await worker.evaluate(async (storageKey) => {
+      const stored = await chrome.storage.session.get(storageKey);
+      return stored?.[storageKey] || null;
+    }, key);
+    if (value?.stage === 'finished') return value;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`run progress timeout for tab ${tabId}`);
+}
+
 async function inject(browser, tabId) {
   const worker = await getWorker(browser);
   // This calls the same injection helper used by the action click path; the e2e runner only bypasses the Instagram URL gate.
@@ -147,6 +162,12 @@ async function scenarioStandard(browser, origin) {
   await inject(browser, tabId);
   const result = await waitForResult(browser, 120000, logs);
   assertStandardResult(result, logs);
+  const progress = await waitForRunProgress(browser, tabId);
+  assert.equal(progress.accounts?.relationshipSet, 'assisted');
+  assert.equal(progress.accounts?.followersWithoutMeFollowing?.length, EXPECTED.followersOnly);
+  assert.equal(progress.accounts?.iFollowButNotReturned?.length, EXPECTED.followingOnly);
+  assert.deepEqual(progress.accounts?.followersCandidates, []);
+  assert.deepEqual(progress.accounts?.followingCandidates, []);
   await page.close();
 }
 
@@ -212,6 +233,10 @@ async function scenarioDisplayedCountIncludesInactive(browser, origin) {
   assert.equal(result.diffs.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
   assert.equal(result.diffs.iFollowButNotReturned.length, EXPECTED.followingOnly);
   assert.equal(result.diffs.integrity.ok, true);
+  const progress = await waitForRunProgress(browser, tabId);
+  assert.equal(progress.accounts?.relationshipSet, 'strict');
+  assert.equal(progress.accounts?.followersWithoutMeFollowing?.length, EXPECTED.followersOnly);
+  assert.equal(progress.accounts?.iFollowButNotReturned?.length, EXPECTED.followingOnly);
   assert.equal(result.followersCompletion?.completeAtListEnd, true);
   assert.equal(result.followingCompletion?.completeAtListEnd, true);
   assert(logs.some((line) => line.includes('확정 비교 가능')), 'missing confirmed trust gate log');

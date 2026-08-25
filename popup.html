@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>IG Comparator</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="account-list-ui.css">
 </head>
 <body>
   <main class="app-shell">
@@ -93,6 +94,17 @@
       </div>
     </section>
 
+    <section id="accountDetailsSection" class="account-details-section" aria-labelledby="accountDetailsTitle" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ACCOUNT DETAILS</p>
+          <h2 id="accountDetailsTitle">계정 상세</h2>
+        </div>
+        <span id="accountSetBadge" class="integrity-badge" data-tone="neutral">확인 중</span>
+      </div>
+      <div id="accountDetailHost" class="account-detail-host"></div>
+    </section>
+
     <section id="warningSection" class="message-card" hidden>
       <h2>확인할 내용</h2>
       <ul id="warningList"></ul>
@@ -117,6 +129,8 @@
     <p id="liveStatus" class="sr-only" aria-live="polite"></p>
     <p id="errorStatus" class="sr-only" role="alert"></p>
   </main>
+  <script src="account-list-contract.js"></script>
+  <script src="account-list-ui.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

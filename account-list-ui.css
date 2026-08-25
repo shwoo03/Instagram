@@ -1,0 +1,209 @@
+.account-details-section {
+  min-width: 0;
+}
+
+.account-detail-host {
+  display: grid;
+  gap: 8px;
+}
+
+.account-disclosure {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-muted);
+}
+
+.account-disclosure.is-candidate {
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--line));
+  background: var(--warning-soft);
+}
+
+.account-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+details > .account-summary {
+  cursor: pointer;
+}
+
+details > .account-summary::-webkit-details-marker,
+details > .account-summary::marker {
+  display: none;
+  content: "";
+}
+
+details > .account-summary::before {
+  width: 14px;
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  content: "›";
+  font-size: 17px;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+details[open] > .account-summary::before {
+  transform: rotate(90deg);
+}
+
+.account-summary > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.account-summary > strong {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.account-disclosure.is-candidate .account-summary > strong {
+  color: var(--warning);
+}
+
+.account-disclosure.is-empty .account-summary {
+  color: var(--text-soft);
+}
+
+.account-disclosure-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.account-name-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 0 0;
+  list-style: none;
+}
+
+.account-name-list li {
+  min-width: 0;
+}
+
+.account-name-list a {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 9px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.account-name-list a:hover {
+  text-decoration: underline;
+}
+
+.account-name-list a:focus-visible,
+.account-more-button:focus-visible,
+.account-summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--info) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.account-name-list a span {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  text-decoration: none;
+}
+
+.account-name-list.is-candidate a {
+  color: var(--warning);
+}
+
+.account-list-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 9px;
+}
+
+.account-more-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 11px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.account-more-button:hover {
+  border-color: var(--info);
+}
+
+.account-candidate-group {
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.account-candidate-group + .account-candidate-group {
+  border-top: 1px solid color-mix(in srgb, var(--warning) 25%, var(--line));
+}
+
+.account-candidate-group h4 {
+  margin: 0;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.account-empty,
+.account-truncated-notice {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.account-truncated-notice {
+  color: var(--warning);
+}
+
+@media (min-width: 720px) {
+  .account-name-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-disclosure.is-candidate .account-disclosure-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-disclosure.is-candidate .account-name-list {
+    grid-template-columns: 1fr;
+  }
+
+  .account-candidate-group + .account-candidate-group {
+    border-top: 0;
+    border-left: 1px solid color-mix(in srgb, var(--warning) 25%, var(--line));
+    padding-left: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  details > .account-summary::before {
+    transition-duration: 0.01ms;
+  }
+}

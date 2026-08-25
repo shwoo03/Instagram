@@ -7,6 +7,9 @@ const FILES = [
   'manifest.json',
   'background.js',
   'accuracy-engine.js',
+  'account-list-contract.js',
+  'account-list-ui.js',
+  'account-list-ui.css',
   'network-payload-parser.js',
   'debugger-capture.js',
   'main.js',
@@ -56,7 +59,7 @@ async function patchBackgroundForE2e() {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["accuracy-engine.js", "main.js"]
+    files: ["accuracy-engine.js", "account-list-contract.js", "main.js"]
   });
 }`;
   await fs.writeFile(backgroundPath, replaceFunctionSource(source, 'injectInstagramCollector', replacement));
