@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0
+
+- Added collapsed account-name disclosures to the popup and DevTools panel.
+- Added separate `나만 팔로우`, `나를 팔로우`, and follower/following candidate groups.
+- Added 20-at-a-time list expansion and validated fixed-origin Instagram profile links.
+- Added a background-resanitized, 1,000-name-per-list session contract with truncation notices.
+- Added pure contract/UI fixtures and responsive Chromium render checks at popup and panel widths.
+
 ## v1.3.0
 
 - Added local-only, run-scoped automatic Instagram Network capture through `chrome.debugger`.

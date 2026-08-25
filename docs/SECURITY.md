@@ -86,6 +86,12 @@ Allowed runtime storage should be limited to derived result snapshots and
 diagnostics. Do not persist raw DevTools response bodies, cookies, request
 headers, auth state, private messages, or unrelated profile data.
 
+Per-tab progress may contain only the four derived account-name lists used by
+the UI: two relationship differences and followers/following candidates. Each
+list is normalized, deduplicated, sorted, capped at 1,000 names, and sanitized
+again in the background before `chrome.storage.session` storage. Profile links
+are constructed from validated usernames on the fixed Instagram origin.
+
 ## E2E Test Build Boundary
 
 The Puppeteer e2e harness may create a copied extension under `tools/e2e/.build/` with localhost-only `host_permissions` for synthetic fixture pages. That permission is test-build only and must not be added to the deployment `manifest.json`. The fixture uses only generated `e2e_user_###` usernames and must not copy real Instagram markup, cookies, headers, raw payloads, or account data.

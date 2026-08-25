@@ -213,3 +213,13 @@ Next operator action: open `chrome://extensions`, reload the unpacked extension 
 - Raw response bodies are parsed transiently and discarded. Messages/storage contain only derived usernames, fixed endpoint labels, counts, timestamps, pagination, source mode, and diagnostics.
 - Validation passed: `npm test`, `npm run e2e` (all six scenarios), and `git diff --check` before final commit preparation.
 - Mock fixtures and Puppeteer fallback do not prove real Chrome debugger capture. Remaining manual validation: reload the unpacked extension, run with DevTools closed, verify the Chrome debugging banner and exact counts, then test DevTools-already-open skip, mid-run handoff, stop/detach, navigation cleanup, and session-storage privacy.
+
+## 2026-08-25 Account Name Lists UI
+
+- Manifest is now v1.4.0.
+- Popup and DevTools panel show a dedicated `계정 상세` section with collapsed `나만 팔로우`, `나를 팔로우`, and `검토 후보` disclosures.
+- Candidate accounts remain divided into `팔로워 후보` and `팔로잉 후보`; they never enter confirmed relationship lists.
+- Each disclosure reveals 20 usernames at a time. Validated usernames link to the fixed Instagram profile origin in a new tab.
+- Per-tab progress stores only four derived username lists, each normalized/deduplicated/sorted and capped at 1,000 by a background sanitizer.
+- Validation passed: `npm test`, all six `npm run e2e` scenarios, focused strict/assisted progress assertions, `npm run ui:e2e`, and popup 320/360/420 plus panel 320/736/1024 overflow checks.
+- Responsive screenshots were visually inspected in both default-collapsed and opened-list states. Real Instagram username parity remains a manual Chrome check after extension reload.

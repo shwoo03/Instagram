@@ -23,6 +23,8 @@ which diff fields may contain false positives.
 - `background.js`: action click handler and DevTools-to-page message relay.
 - `debugger-capture.js`: run-scoped automatic CDP Network capture controller.
 - `network-payload-parser.js`: shared privacy-preserving Instagram response parser.
+- `account-list-contract.js`: bounded username-list validation and session data contract.
+- `account-list-ui.js`: shared popup/panel account disclosure renderer.
 - `accuracy-engine.js`: canonical count, completion, trust, and strict/assisted comparison rules.
 - `main.js`: injected page collector, modal scroller, result comparer, and Korean console reporter.
 - `popup.html`: local start/progress/result popup shown from the extension icon.
@@ -74,6 +76,7 @@ Manual Chrome check:
 5. Confirm the popup shows live collection status.
 6. In DevTools, open the **IG Comparator** panel for detailed evidence status.
 7. Review the Korean verdict: `확정 비교 가능`, `참고용 결과`, `부분 결과`, or `네트워크 수집 재실행 필요`.
+8. Open `계정 상세` to see `나만 팔로우`, `나를 팔로우`, and separately grouped candidate usernames. Lists start collapsed and reveal 20 names at a time; clicking a username opens its Instagram profile in a new tab.
 
 ## Operating Rules
 

@@ -36,6 +36,14 @@
 - Done: pass `npm test` and all six synthetic `npm run e2e` scenarios.
 - Open: manual unpacked-extension validation against real Instagram for exact capture, DevTools skip/handoff, user stop, navigation cleanup, and stored-data inspection.
 
+## 2026-08-25 Account Name Lists UI
+
+- Done: show `나만 팔로우`, `나를 팔로우`, and separately grouped candidates in both popup and DevTools panel.
+- Done: keep lists collapsed by default, reveal 20 usernames at a time, and open validated Instagram profiles in a new tab.
+- Done: sanitize and cap each per-tab account list at 1,000 usernames before session storage.
+- Done: pass pure contract/UI fixtures, all six existing collection E2E scenarios, focused strict/assisted progress assertions, and responsive Chromium render checks.
+- Open: reload the unpacked extension and confirm popup/panel usernames against one real Instagram comparison.
+
 ## 2026-06-06 Harness Stabilization Backlog
 
 - Done: add runtime DevTools preflight and page-network auto-assist before list collection.
