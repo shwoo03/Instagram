@@ -128,13 +128,13 @@
 
   function setStatusView(state, record) {
     const verdictLabel = record?.verdict.labelKo;
-    const action = record?.verdict.recommendedActionKo;
+    const action = record?.verdict.recommendedActionKo === "없음" ? "" : record?.verdict.recommendedActionKo;
     const views = {
       "no-tab": ["사용 불가", "danger", "Instagram 탭 필요", "Instagram 프로필을 열어 주세요", "현재 선택된 탭에서는 비교를 시작할 수 없습니다."],
       ready: ["실행 준비", "neutral", "프로필 준비됨", "비교를 시작할 수 있어요", "실행 중 자동 네트워크 캡처를 먼저 시도하고, 사용할 수 없으면 참고용 수집으로 계속합니다."],
       running: ["수집 중", "info", "목록 수집 진행 중", "잠시만 기다려 주세요", "현재 실행을 유지한 채 팔로워와 팔로잉 증거를 확인하고 있습니다."],
       "stale-profile": ["이전 결과", "warning", "프로필 불일치", "다른 프로필의 결과입니다", `저장된 결과는 @${record?.profile || "알 수 없음"} 기준입니다. 현재 @${ui.currentProfile || "알 수 없음"}에서 다시 실행해 주세요.`],
-      confirmed: ["확정", "success", "검증 완료", verdictLabel || "확정 비교 가능", action || "DevTools 네트워크 증거와 비교 무결성이 확인되었습니다."],
+      confirmed: ["확정", "success", "검증 완료", verdictLabel || "확정 비교 가능", action || "두 목록의 수집 완료 조건과 비교 계산이 확인되었습니다."],
       reference: ["참고용", "info", "비교 완료", verdictLabel || "참고용 결과", action || "DOM 또는 보조 증거를 사용했습니다. 결과를 참고용으로 확인해 주세요."],
       partial: ["일부 완료", "warning", "부분 결과 보존됨", verdictLabel || "수집이 끝까지 완료되지 않았습니다", action || "확인된 데이터는 보존했습니다. 목록을 다시 연 뒤 재실행할 수 있습니다."],
       superseded: ["교체됨", "warning", "이전 실행 종료", "새 실행으로 교체되었습니다", "기존 부분 결과를 보존하고 최신 실행 상태를 기다립니다."],
@@ -231,7 +231,8 @@
     elements.candidateCount.textContent = formatCount((followers.candidates || 0) + (following.candidates || 0));
 
     const integrityPassed = /CONFIRMED/.test(record.verdict.code) && state === "confirmed";
-    elements.integrityBadge.textContent = integrityPassed ? "무결성 확인" : state === "reference" ? "참고용" : "부분 결과";
+    elements.integrityBadge.textContent = integrityPassed ? "비교 계산 일치" : state === "reference" ? "참고용" : "부분 결과";
+    elements.integrityBadge.title = "맞팔과 한쪽에만 있는 계정의 합계를 확인합니다. 수집 완료 여부는 상단 판정을 확인하세요.";
     elements.integrityBadge.dataset.tone = integrityPassed ? "success" : state === "reference" ? "info" : "warning";
   }
 
@@ -365,6 +366,20 @@
       }
     }, 2500);
   }
+
+  chrome.tabs.onUpdated?.addListener((tabId, changeInfo) => {
+    if (tabId !== ui.tabId || !changeInfo.url) return;
+    ui.currentProfile = globalThis.IGRunContext?.profileFromInstagramUrl(changeInfo.url) || "";
+    ui.validInstagramTab = Boolean(ui.currentProfile);
+    ui.starting = false;
+    render();
+  });
+  const ageTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    const record = ui.record ? normalizeRecord(ui.record) : null;
+    renderRunContext(deriveState(record), record);
+  }, 15000);
+  window.addEventListener("pagehide", () => window.clearInterval(ageTimer), { once: true });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "session" || !ui.storageKey || !Object.hasOwn(changes, ui.storageKey)) return;

@@ -70,9 +70,24 @@
         payloadCount: session.payloadCount,
         candidatePayloadCount: session.candidatePayloadCount,
         failureCount: session.failureCount,
-        pendingCount: session.pending.size,
+        pendingCount: session.pending.size + session.processing.size,
+        listHealth: getListHealth(session),
         lastReason: session.lastReason
       });
+    }
+
+    function getListHealth(session) {
+      return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
+        pendingCount: [...session.pending.values(), ...session.processing.values()].filter((item) => item.mode === mode).length,
+        failedCount: session.failures[mode]
+      }]));
+    }
+
+    function failedRequest(session, metadata, reason) {
+      if (metadata?.mode in session.failures) session.failures[metadata.mode]++;
+      session.failureCount++;
+      session.lastReason = reason;
+      emitStatus(session, "degraded", reason);
     }
 
     function emitStatus(session, type, reason, extra = {}) {
@@ -84,6 +99,7 @@
         runId: session?.runId || "",
         profile: session?.profile || "unknown_profile",
         capturedAt: new Date(now()).toISOString(),
+        listHealth: session ? getListHealth(session) : null,
         ...extra
       }));
     }
@@ -97,12 +113,17 @@
     function cleanupPending(session) {
       const cutoff = now() - PENDING_TTL_MS;
       for (const [requestId, metadata] of session.pending) {
-        if (metadata.createdAt < cutoff) session.pending.delete(requestId);
+        if (metadata.createdAt < cutoff) {
+          session.pending.delete(requestId);
+          failedRequest(session, metadata, "response-timeout");
+        }
       }
       while (session.pending.size > MAX_PENDING_REQUESTS) {
         const oldest = session.pending.keys().next().value;
         if (oldest === undefined) break;
+        const metadata = session.pending.get(oldest);
         session.pending.delete(oldest);
+        failedRequest(session, metadata, "pending-limit-exceeded");
       }
     }
 
@@ -140,7 +161,11 @@
         candidatePayloadCount: 0,
         failureCount: 0,
         lastReason: "starting",
-        pending: new Map()
+        pending: new Map(),
+        processing: new Map(),
+        failures: { followers: 0, following: 0 },
+        seen: new Set(),
+        sequence: 0
       };
       sessions.set(tabId, session);
 
@@ -177,7 +202,12 @@
       const profile = safeProfile(binding.profile);
       if (!session?.attached) return Object.freeze({ ok: false, reason: "debugger-session-unavailable" });
       if (!runId || profile === "unknown_profile") return Object.freeze({ ok: false, reason: "invalid-debugger-binding" });
-      if (session.runId && session.runId !== runId) session.pending.clear();
+      if (session.runId && session.runId !== runId) {
+        session.pending.clear();
+        session.processing.clear();
+        session.seen.clear();
+        session.failures = { followers: 0, following: 0 };
+      }
       session.runId = runId;
       session.profile = profile;
       session.lastReason = "bound";
@@ -198,7 +228,11 @@
       }
 
       session.stopping = true;
+      session.attached = false;
       session.lastReason = safeReason(reason, "completed");
+      for (const metadata of session.pending.values()) {
+        if (metadata.mode in session.failures) session.failures[metadata.mode]++;
+      }
       session.pending.clear();
       try {
         await chromeApi.debugger.sendCommand({ tabId }, "Network.disable");
@@ -236,33 +270,31 @@
           base64Encoded: result?.base64Encoded === true
         });
         if (!parsed?.ok) {
-          session.failureCount++;
-          session.lastReason = parsed?.reason || "response-parse-failed";
-          if (["body-too-large", "base64-decode-failed", "empty-response-body"].includes(parsed?.reason)) {
-            emitStatus(session, "degraded", parsed.reason);
-          }
+          failedRequest(session, metadata, parsed?.reason || "response-parse-failed");
           return;
         }
 
         session.lastActivityAt = new Date(now()).toISOString();
         if (parsed.evidence.confidence === "exact") session.payloadCount++;
         else session.candidatePayloadCount++;
-        onEvidence(Object.freeze({
+        await onEvidence(Object.freeze({
           ...parsed.evidence,
           type: "usernames",
           tabId: session.tabId,
           captureSessionId: session.captureSessionId,
           runId: session.runId,
           profile: session.profile,
+          requestOrder: metadata.requestOrder,
           capturedAt: session.lastActivityAt
         }));
       } catch (error) {
-        if (sessions.get(session.tabId) !== session) return;
-        session.failureCount++;
-        session.lastReason = "response-body-unavailable";
-        emitStatus(session, "degraded", "response-body-unavailable", {
-          error: safeReason(error?.message, "response-body-unavailable")
-        });
+        if (sessions.get(session.tabId) !== session || !session.attached || metadata.runId !== session.runId) return;
+        failedRequest(session, metadata, "response-body-or-delivery-unavailable");
+      } finally {
+        if (session.processing.get(requestId) === metadata) session.processing.delete(requestId);
+        if (sessions.get(session.tabId) === session && session.attached && metadata.runId === session.runId) {
+          emitStatus(session, "progress", "capture-progress");
+        }
       }
     }
 
@@ -284,26 +316,33 @@
           captureSessionId: session.captureSessionId
         };
         if (!parser.isCandidateRequestMetadata(metadata)) return;
+        metadata.mode = parser.detectMode(metadata.url);
         if (metadata.status === 429) {
           if (session.runId) emitStatus(session, "rate-limited", "rate-limited", { httpStatus: 429 });
           return;
         }
-        if (!session.runId || metadata.status < 200 || metadata.status >= 300) return;
+        if (!session.runId) return;
+        if (metadata.status < 200 || metadata.status >= 300) {
+          failedRequest(session, metadata, "http-response-failed");
+          return;
+        }
         const requestId = String(params.requestId || "");
-        if (!requestId) return;
+        if (!requestId || session.seen.has(requestId)) return;
+        session.seen.add(requestId);
+        if (session.seen.size > 2048) session.seen.delete(session.seen.values().next().value);
+        metadata.requestOrder = Number(params.response?.timing?.requestTime) || Number(params.timestamp) || ++session.sequence;
         session.pending.set(requestId, metadata);
         cleanupPending(session);
+        emitStatus(session, "progress", "capture-progress");
         return;
       }
 
       if (method === "Network.loadingFailed") {
         const requestId = String(params.requestId || "");
-        if (!session.pending.delete(requestId)) return;
-        session.failureCount++;
-        session.lastReason = "loading-failed";
-        emitStatus(session, "degraded", "loading-failed", {
-          error: safeReason(params.errorText, "loading-failed")
-        });
+        const metadata = session.pending.get(requestId);
+        if (!metadata) return;
+        session.pending.delete(requestId);
+        failedRequest(session, metadata, "loading-failed");
         return;
       }
 
@@ -312,6 +351,7 @@
         const metadata = session.pending.get(requestId);
         if (!metadata) return;
         session.pending.delete(requestId);
+        session.processing.set(requestId, metadata);
         track(processFinishedBody(session, requestId, metadata));
       }
     }
@@ -322,6 +362,9 @@
       if (!session) return;
       sessions.delete(tabId);
       session.attached = false;
+      for (const metadata of session.pending.values()) {
+        if (metadata.mode in session.failures) session.failures[metadata.mode]++;
+      }
       session.pending.clear();
       if (session.stopping) return;
       session.lastReason = safeReason(reason, "detached");
@@ -337,6 +380,16 @@
       hasSession: (tabId) => sessions.has(safeTabId(tabId)),
       start,
       stop,
+      settle: async (tabId, runId, timeoutMs = 2500) => {
+        const session = sessions.get(safeTabId(tabId));
+        if (!session || session.runId !== runId) return { ok: false, reason: "debugger-session-unavailable" };
+        const deadline = Date.now() + Math.min(Math.max(timeoutMs, 0), 5000);
+        while (session.attached && (session.pending.size || session.processing.size) && Date.now() < deadline) {
+          cleanupPending(session);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return { ok: true, session: publicSession(session) };
+      },
       flush: async () => {
         while (inFlight.size > 0) await Promise.all(Array.from(inFlight));
       }

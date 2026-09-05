@@ -211,7 +211,8 @@
             pausedUntilMs: 0,
             lastOrigin: null
         },
-        runTimeline: []
+        runTimeline: [],
+        captureHealth: { debugger: {}, devtools: {} }
     };
 
     function createRunCapability() {
@@ -247,6 +248,12 @@
         const warnings = Array.isArray(diffs.warnings)
             ? diffs.warnings.map((warning) => typeof warning === "string" ? warning : warning?.message).filter(Boolean).slice(0, 10)
             : [];
+        for (const mode of ["followers", "following"]) {
+            const health = [state.captureHealth.debugger[mode], state.captureHealth.devtools[mode]];
+            const pending = health.reduce((sum, item) => sum + (item?.pendingCount || 0), 0);
+            const failed = health.reduce((sum, item) => sum + (item?.failedCount || 0), 0);
+            if (pending || failed) warnings.push(`${mode === "followers" ? "팔로워" : "팔로잉"} 응답 처리: 대기 ${pending}개 · 실패 ${failed}개. 수집 완료로 확정하지 않았습니다.`);
+        }
         const relationshipSet = verdict.code === "CONFIRMED"
             ? "strict"
             : (verdict.code === "REFERENCE_ONLY" ? "assisted" : "partial");
@@ -549,7 +556,13 @@
     function buildCompactAccountEvidence(usernames, mode) {
         return (usernames || []).map((username) => ({
             username,
-            source: getCompactAccountEvidenceSource(username, mode)
+            source: getCompactAccountEvidenceSource(username, mode),
+            ...(state.candidateUsers[mode].has(username) ? {
+                reason: getCompactAccountEvidenceSource(username, mode) === "dom" && hasConfirmedNetworkEvidence(mode)
+                    ? "dom_not_network"
+                    : ["debugger", "devtools", "page-network"].includes(getCompactAccountEvidenceSource(username, mode))
+                        ? "ambiguous_network" : "insufficient_evidence"
+            } : {})
         }));
     }
 
@@ -1525,6 +1538,9 @@
             sendResponse?.({ ok: true, ignored: "debugger-binding-mismatch" });
             return false;
         }
+        if (message.listHealth && window.__igFollowerRunInProgress === true) {
+            state.captureHealth.debugger = message.listHealth;
+        }
 
         if (message.type === "IG_DEBUGGER_READY") {
             state.debuggerBridge.ready = true;
@@ -1594,12 +1610,7 @@
             const pagination = state.pagination[mode];
             pagination.debuggerExactPayloadCount++;
             pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
-            if (message.pagination?.recognized === true) {
-                pagination.recognized = true;
-                pagination.hasMore = typeof message.pagination.hasMore === "boolean" ? message.pagination.hasMore : null;
-                pagination.terminal = message.pagination.terminal === true;
-                pagination.terminalReason = message.pagination.terminalReason || null;
-            }
+            Object.assign(pagination, globalThis.IGAccuracyEngine.mergePaginationEvidence(pagination, message.pagination, "debugger", message.requestOrder));
             demoteDomOnlyConfirmedUsers(mode, "debugger-exact-evidence-arrived");
         }
 
@@ -1645,6 +1656,10 @@
         }
 
         const handler = (message, sender, sendResponse) => {
+            if (message?.type === "IG_COLLECTION_CONTEXT" && message.source === "extension-background") {
+                sendResponse({ runId: state.runId, profile: getProfileKey() });
+                return false;
+            }
             if (!message || !/^IG_(DEVTOOLS|DEBUGGER)_/.test(message.type || "")) {
                 return false;
             }
@@ -1684,6 +1699,15 @@
             }
 
             if (message.type === "IG_DEVTOOLS_STATUS") {
+                if (window.__igFollowerRunInProgress === true && message.captureHealth) {
+                    for (const mode of ["followers", "following"]) {
+                        const previous = state.captureHealth.devtools[mode] || {};
+                        state.captureHealth.devtools[mode] = {
+                            pendingCount: Number(message.captureHealth[mode]?.pendingCount) || 0,
+                            failedCount: (previous.failedCount || 0) + (message.failedMode === mode ? 1 : 0)
+                        };
+                    }
+                }
                 state.devtoolsBridge.statusCount++;
                 state.devtoolsBridge.lastStatusAt = message.capturedAt || new Date().toISOString();
                 state.devtoolsBridge.lastStatus = message.stats || null;
@@ -1763,12 +1787,7 @@
                 const pagination = state.pagination[mode];
                 pagination.exactPayloadCount++;
                 pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
-                if (message.pagination.recognized === true) {
-                    pagination.recognized = true;
-                    pagination.hasMore = typeof message.pagination.hasMore === "boolean" ? message.pagination.hasMore : null;
-                    pagination.terminal = message.pagination.terminal === true;
-                    pagination.terminalReason = message.pagination.terminalReason || null;
-                }
+                Object.assign(pagination, globalThis.IGAccuracyEngine.mergePaginationEvidence(pagination, message.pagination, "devtools", message.requestOrder));
             }
             if (!isAmbiguousNetwork) {
                 demoteDomOnlyConfirmedUsers(mode, "devtools-exact-evidence-arrived");
@@ -1911,6 +1930,26 @@
                 resolve({ ok: false, reason: error?.message || "debugger-stop-failed" });
             }
         });
+    }
+
+    async function settleCapturedResponses() {
+        if (state.debuggerBridge.captureSessionId && typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+            try {
+                const response = await chrome.runtime.sendMessage({
+                    type: "IG_DEBUGGER_SETTLE", source: "instagram-collector", schemaVersion: 1, runId: state.runId
+                });
+                if (response?.session?.listHealth) state.captureHealth.debugger = response.session.listHealth;
+                else if (state.debuggerBridge.attached) {
+                    for (const mode of ["followers", "following"]) state.captureHealth.debugger[mode] = { failedCount: 1 };
+                }
+            } catch {
+                for (const mode of ["followers", "following"]) state.captureHealth.debugger[mode] = { failedCount: 1 };
+            }
+        }
+        const startedAt = Date.now();
+        while (Object.values(state.captureHealth.devtools).some((item) => item.pendingCount > 0) && Date.now() - startedAt < 2500) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
     }
 
     async function runAccuracyPreflight(summary = {}) {
@@ -3838,6 +3877,8 @@
         const devtoolsCandidateCount = candidates.filter((username) => state.userProvenance[mode]?.get(username)?.sources?.has("DevTools")).length;
         const debuggerCandidateCount = candidates.filter((username) => state.userProvenance[mode]?.get(username)?.sources?.has("Debugger")).length;
         const completion = engine?.assessListCompletion({
+            capturePendingCount: (state.captureHealth.debugger[mode]?.pendingCount || 0) + (state.captureHealth.devtools[mode]?.pendingCount || 0),
+            captureFailedCount: (state.captureHealth.debugger[mode]?.failedCount || 0) + (state.captureHealth.devtools[mode]?.failedCount || 0),
             expectedCount: state.expectedCountEvidence[mode] || expectedCount || null,
             confirmedCount,
             assistedTotalCount,
@@ -4585,6 +4626,8 @@
         const followersTarget = getExactCollectionTarget("followers");
         console.log(`🎯 팔로워 목표 기준: 화면 표시 ${state.expectedCounts.followers || "없음"}명, 실제 목표 ${followersTarget > 0 ? `${followersTarget}명` : "전체(정체 시 종료)"}`);
         let followers = await scrollUntilEnd(followersTarget, state.collectedUsers, "followers", { saveScrollBoxForFollow: true });
+        await settleCapturedResponses();
+        followers = Array.from(state.collectedUsers);
         let followersCompletion = null;
         if (followersTarget > 0 && followers.length < followersTarget) {
             followersCompletion = getListCompletionAssessment("followers", followersTarget);
@@ -4698,6 +4741,8 @@
         emitRunProgress("collecting_following", "running", summary, { force: true });
         const followingTarget = getExactCollectionTarget("following");
         let following = await scrollUntilEnd(followingTarget, state.followingUsers, "following");
+        await settleCapturedResponses();
+        following = Array.from(state.followingUsers);
         let followingCompletion = null;
         if (followingTarget > 0 && following.length < followingTarget) {
             followingCompletion = getListCompletionAssessment("following", followingTarget);
@@ -4723,6 +4768,10 @@
             }
         }
         if (finalizeIfProfileChanged(summary)) return;
+        await settleCapturedResponses();
+        await stopAutomaticDebuggerCapture("collection-settled");
+        following = Array.from(state.followingUsers);
+        followers = Array.from(state.collectedUsers);
         summary.followingCount = following.length;
         summary.following = following;
         summary.followingScrollEndReason = state.lastFollowingScrollEndReason;

@@ -165,3 +165,13 @@ Notes on prior 2026-06-07 open items:
 - Open: reload version 1.2.0 in the user's installed unpacked extension and run one real DevTools-open and one DevTools-closed Instagram check.
 - Open: add `chrome.storage.session.getBytesInUse()` as an actual usage metric separate from the conservative JSON byte estimate.
 - Deferred by user choice: official Instagram export import/download workflow.
+
+## 2026-09-05 Capture verification and result explanation (v1.7.0)
+
+- Implemented: real local popup/controller/response-body/parser/relay/compare gate in `npm run e2e:capture`; worker restart, explicit detach, navigation and tab-close checks.
+- Implemented: track response reads and delivery acknowledgements as pending; exact-list failures and unsettled responses block completion and DOM promotion. Waiting is bounded; no new Instagram requests or recollection were added.
+- Implemented: request-order pagination merge, duplicate request suppression, equal-order conflict handling and post-stop body rejection.
+- Implemented: distinguish same-document list-modal history changes from a replaced document before detaching capture; preserve old-profile results for the existing mismatch UI.
+- Implemented: allowlisted per-candidate exclusion reasons, clearer calculation-consistency label, profile-event refresh and relative-age refresh without collapsing expanded lists.
+- Follow-up: verify installed v1.7.0 on real Instagram with DevTools closed/open and profile A -> B -> back navigation. Local generated data is not live Instagram validation.
+- Deferred: generated-input testing library adoption and global storage-usage metrics (research item 5), partial recollection, downloads, side panel and persistent history.

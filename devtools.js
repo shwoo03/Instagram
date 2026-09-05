@@ -24,6 +24,14 @@
 
   let port = null;
   const pending = new Map();
+  const reading = { followers: 0, following: 0 };
+  let navigationEpoch = 0;
+
+  function captureHealth() {
+    return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
+      pendingCount: reading[mode] + [...pending.values()].filter((item) => item.type === "IG_DEVTOOLS_USERNAMES" && item.mode === mode).length
+    }]));
+  }
 
   function getSafeUrlLabel(url) {
     return parser?.getSafeEndpointLabelFromUrl(url) || "instagram:network:candidate";
@@ -65,7 +73,11 @@
           console.log("[IG DevTools] relay ack failed:", message.ackType, stats.lastError, getStatsSnapshot());
         }
         stats.consecutiveFailures = 0;
+        const delivered = pending.get(message.seq);
         pending.delete(message.seq);
+        if (delivered?.type === "IG_DEVTOOLS_USERNAMES") {
+          sendStatus("capture-progress", message.ok ? "" : delivered.mode);
+        }
       });
 
       port.onDisconnect.addListener(() => {
@@ -121,10 +133,12 @@
     postToBackground("IG_DEVTOOLS_READY", { reason });
   }
 
-  function sendStatus(reason = "heartbeat") {
+  function sendStatus(reason = "heartbeat", failedMode = "") {
     stats.statusSent++;
     postToBackground("IG_DEVTOOLS_STATUS", {
       reason,
+      captureHealth: captureHealth(),
+      failedMode,
       error: stats.lastError || ""
     });
   }
@@ -146,6 +160,7 @@
         console.log("[IG DevTools] response ignored:", getSafeUrlLabel(url), result.reason);
         sendStatus(result.reason);
       }
+      sendStatus("response-parse-failed", parser.detectMode(url));
       return;
     }
 
@@ -158,7 +173,8 @@
       mimeType: evidence.mimeType,
       usernames: evidence.usernames,
       mode: evidence.mode,
-      pagination: evidence.pagination
+      pagination: evidence.pagination,
+      requestOrder: Date.parse(request.startedDateTime || "") || 0
     });
     console.log("[IG DevTools] captured JSON response:", evidence.endpoint, evidence.usernames.length, getStatsSnapshot());
   }
@@ -184,20 +200,31 @@
     }
 
     stats.matched++;
+    const mode = parser.detectMode(requestUrl);
+    const epoch = navigationEpoch;
+    if (mode in reading) reading[mode]++;
+    sendStatus("capture-progress");
     request.getContent((content, encoding) => {
+      if (epoch !== navigationEpoch) return;
+      if (mode in reading) reading[mode]--;
       if (!content) {
         stats.failed++;
         stats.lastError = "empty-response-body";
         console.log("[IG DevTools] empty response body:", getSafeUrlLabel(request.request.url || ""));
-        sendStatus("empty-response-body");
+        sendStatus("empty-response-body", mode);
         return;
       }
 
       sendUsernamesToInspectedTab(request, content, encoding || "");
+      sendStatus("capture-progress");
     });
   });
 
   chrome.devtools.network.onNavigated.addListener((url) => {
+    navigationEpoch++;
+    reading.followers = 0;
+    reading.following = 0;
+    pending.clear();
     stats.navigations++;
     stats.lastNavigatedAt = new Date().toISOString();
     stats.matched = 0;

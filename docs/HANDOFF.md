@@ -246,3 +246,28 @@ Next operator action: open `chrome://extensions`, reload the unpacked extension 
 - Fixed the UI number sanitizer so absent values render as `—` while a real zero still renders as `0`.
 - Validation passed: `npm test`, all six `npm run e2e` scenarios, `npm run ui:e2e` at popup 320/360/420 and panel 320/736/1024, normal/stale screenshots, and `git diff --check`.
 - Remaining manual check: after extension reload, complete a comparison on profile A, navigate the same tab to profile B, and confirm popup/panel suppress profile A results until profile B is run.
+
+## 2026-09-05 Capture completion and live result context — v1.7.0
+
+The extension now checks unfinished response processing before declaring collection complete, and explains why individual candidate accounts were excluded. Popup and DevTools result context refresh when the profile or elapsed time changes.
+
+### Runtime changes
+
+- `debugger-capture.js` counts pending network responses, body reads and unacknowledged username delivery. Parsing, loading, expiry and delivery failures are recorded per exact list. A bounded settle step precedes final comparison; stopping capture rejects late body reads.
+- `accuracy-engine.js` keeps earlier-request pagination from overwriting newer evidence. Equal request timestamps with conflicting signals invalidate terminal proof. Pending/failed capture blocks completion even when displayed and collected counts match.
+- `devtools.js` carries request start order, counts unfinished body callbacks/relays, emits fixed failure reasons and discards callbacks from earlier navigations.
+- The new real capture test revealed that a list modal's same-document history changes could emit `loading` and trigger the previous unconditional debugger detach. `background.js` now checks the collector's run/profile context and rechecks on completion; a new document is cleaned up, while same-profile modal navigation retains capture. Existing old-profile results remain available for the mismatch warning.
+- Candidate evidence adds only allowlisted reason codes. `비교 계산 일치` describes arithmetic consistency; completion remains the separate top verdict. Account storage limits and collection evidence tiers remain unchanged.
+- Visible DevTools panels recheck profile context on tab/navigation events and at 1.5-second intervals; popup ages update every 15 seconds. Time-only updates do not rebuild account disclosures. Non-profile panel targets hide old counts, lists and copying.
+
+### Validation and limits
+
+- `npm test`: syntax and fixture coverage, including reversed response processing, duplicate events, failed reads, late post-stop responses, same-document navigation and candidate explanations.
+- `npm run ui:e2e`: popup 320/360/420 and panel 320/736/1024; candidate explanations, no horizontal overflow, A -> B -> A state transitions, non-profile suppression and advancing age without losing expanded rows. Popup and panel screenshots inspected visually.
+- Existing `npm run e2e`: six synthetic flow scenarios remain a separate check.
+- `npm run e2e:capture`: production popup button handler -> actual Chrome debugger response reads -> parser -> comparison -> session storage -> detach, using a local generated list of 36 followers / 30 following / 24 mutual. Worker termination/restart, explicit detach and navigation/tab-close cleanup are separate assertions.
+- The capture gate copies the extension into a temporary directory and adapts only URL acceptance to the loopback fixture. It uses programmatic activation of the actual popup button because headless popup coordinate clicks were unreliable. It does not validate physical toolbar permission grants, real Instagram DOM/API shapes, or the user's installed extension.
+- Existing uncommitted AGENTS.md, CLAUDE.md, security/reference refresh and skill files belong to the user. They were preserved and excluded from the v1.7.0 commit; only the task-specific addition to REFERENCES.md is included.
+- The user subsequently reported that the extension works correctly. Individual live Instagram scenarios have not been independently observed by the agent.
+
+Optional follow-up checks: run once with DevTools closed, then with DevTools open; check candidate reasons and open-panel A -> B -> A navigation. Partial recollection and downloads remain deferred.

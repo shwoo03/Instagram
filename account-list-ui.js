@@ -49,7 +49,7 @@
         }),
         Object.freeze({
           key: "candidates",
-          labelKo: "검토 후보",
+          labelKo: "비교에서 제외한 후보",
           usernames: Object.freeze([...accounts.followersCandidates, ...accounts.followingCandidates]),
           truncated: accounts.truncated.followersCandidates || accounts.truncated.followingCandidates,
           candidate: true,
@@ -112,11 +112,16 @@
 
     if (sectionKey === "followersCandidates" || sectionKey === "followingCandidates") {
       const side = sectionKey === "followersCandidates" ? "팔로워" : "팔로잉";
+      const reason = {
+        dom_not_network: `화면에서 ${side} 계정으로 발견했지만 수집된 네트워크 목록에서 확인되지 않았습니다.`,
+        ambiguous_network: `네트워크 응답에서 발견했지만 해당 ${side} 목록의 구성원인지 확정하지 못했습니다.`,
+        insufficient_evidence: `${sourcePhrase}에서 발견했지만 ${side} 여부를 확정할 근거가 부족합니다.`
+      }[evidence.reason];
       return Object.freeze({
         ...badge,
         level: "candidate",
         source,
-        reasonKo: `${sourcePhrase}에서 ${side} 후보로 발견됐지만 확정 조건을 충족하지 않아 최종 비교에서는 제외했습니다.`
+        reasonKo: reason ? `${reason} 최종 비교에서는 제외했습니다.` : `${sourcePhrase}에서 ${side} 후보로 발견됐지만 확정 조건을 충족하지 않아 최종 비교에서는 제외했습니다.`
       });
     }
 
@@ -235,6 +240,10 @@
     body.className = "account-disclosure-body";
 
     if (section.candidate) {
+      const note = documentObject.createElement("p");
+      note.className = "account-truncated-notice";
+      note.textContent = "이 후보들은 맞팔·한쪽만 팔로우 수치에 포함되지 않습니다. 같은 계정이 양쪽 후보에 있으면 각각 집계합니다.";
+      body.append(note);
       for (const group of section.groups) {
         const groupElement = documentObject.createElement("section");
         groupElement.className = "account-candidate-group";

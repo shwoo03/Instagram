@@ -140,3 +140,11 @@ affect this Chrome extension.
 - Use for: loading an unpacked extension in Chrome during local development tests.
 - Decision: adopt `puppeteer` as a devDependency only. The e2e test build copies runtime files into `tools/e2e/.build/` and adds localhost `host_permissions` only to that copied manifest; deployment manifest permissions remain unchanged.
 - Status: adopted as local harness; current environment still needs a successful `npm run e2e` run.
+
+## 2026-09-05 Capture completion and live result context
+
+- [Chrome network events](https://chromedevtools.github.io/devtools-protocol/tot/Network/): adopted separate pending response, body-read and delivery acknowledgement tracking in `debugger-capture.js`; request timing accompanies derived evidence so delayed earlier responses cannot replace later pagination state. Covered by `tools/debugger-capture-fixtures.mjs` and `tools/accuracy-engine-fixtures.mjs`.
+- [Puppeteer extension testing](https://pptr.dev/guides/chrome-extensions): adopted a separate `npm run e2e:capture` gate using the actual popup button handler, debugger controller, parser and relay. Only test-copy origin gates accept the loopback fixture. Puppeteer does not attach to the fixture tab, since that correctly triggers the production busy-target guard. This tests neither a real Instagram response shape nor the browser's physical-click permission grant.
+- [Chrome service-worker termination testing](https://developer.chrome.com/docs/extensions/how-to/test/test-serviceworker-termination-with-puppeteer): adopted `WebWorker.close()` in the local capture gate, followed by a popup start that wakes the worker and explicit debugger detachment.
+- [Chrome navigation events](https://developer.chrome.com/docs/extensions/reference/api/webNavigation): same-document history changes require distinct handling. Chosen implementation uses existing tab events plus a collector context reply; it adds no `webNavigation` permission. The real loopback capture gate exposed `loading` notifications during modal history changes. Regression: `tools/navigation-fixtures.mjs`.
+- [Structured clone messaging, April 22, 2026](https://developer.chrome.com/blog/structured-clone-messaging): deferred. Current bounded username/count/reason-code messages do not require new serialization types or a higher Chrome minimum.

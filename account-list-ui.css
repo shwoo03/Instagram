@@ -221,6 +221,10 @@ details[open] > .account-summary::before {
   border-color: var(--info);
 }
 
+.is-candidate > .account-disclosure-body > .account-truncated-notice {
+  grid-column: 1 / -1;
+}
+
 .account-candidate-group {
   min-width: 0;
   padding-top: 10px;

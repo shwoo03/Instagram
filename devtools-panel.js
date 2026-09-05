@@ -160,7 +160,7 @@
       ready: ["실행 대기", "neutral", "수집 준비됨", "비교 실행을 기다리고 있습니다", "확장 팝업에서 비교를 시작하면 근거와 진행 상태가 표시됩니다."],
       running: ["수집 중", "info", "실행 진행 중", "목록 증거를 수집하고 있습니다", "탭을 유지한 채 팔로워와 팔로잉 수집이 끝날 때까지 기다려 주세요."],
       "stale-profile": ["이전 결과", "warning", "프로필 불일치", "다른 프로필의 결과입니다", `저장된 결과는 @${record?.profile || "알 수 없음"} 기준입니다. 현재 @${currentProfile || "알 수 없음"}의 비교 결과로 사용하지 않습니다.`],
-      confirmed: ["확정", "success", "검증 완료", record?.verdict.labelKo || "확정 비교 가능", record?.verdict.recommendedActionKo || "정확한 네트워크 증거와 비교 무결성이 확인되었습니다."],
+      confirmed: ["확정", "success", "검증 완료", record?.verdict.labelKo || "확정 비교 가능", record?.verdict.recommendedActionKo && record.verdict.recommendedActionKo !== "없음" ? record.verdict.recommendedActionKo : "두 목록의 수집 완료 조건과 비교 계산이 확인되었습니다."],
       reference: ["참고용", "info", "보조 증거 사용", record?.verdict.labelKo || "참고용 결과", record?.verdict.recommendedActionKo || "확정 네트워크 증거가 부족해 결과 신뢰도를 낮췄습니다."],
       partial: ["일부 완료", "warning", "부분 결과 보존", record?.verdict.labelKo || "수집이 일부만 완료되었습니다", record?.verdict.recommendedActionKo || "확인된 데이터는 보존했습니다. 종료 이유를 확인해 주세요."],
       superseded: ["교체됨", "warning", "이전 실행 종료", "최신 실행으로 교체되었습니다", "기존 실행은 더 이상 갱신되지 않으며 부분 결과로 보존됩니다."],
@@ -203,7 +203,8 @@
     elements.followersOnlyCount.textContent = formatCount(data.counts.followersOnly);
 
     const integrityPassed = state === "confirmed" && /CONFIRMED/.test(data.verdict.code);
-    elements.integrityBadge.textContent = integrityPassed ? "비교 무결성 확인" : state === "reference" ? "참고용 집합" : state === "ready" ? "실행 대기" : "확인 필요";
+    elements.integrityBadge.textContent = integrityPassed ? "비교 계산 일치" : state === "reference" ? "참고용 집합" : state === "ready" ? "실행 대기" : "확인 필요";
+    elements.integrityBadge.title = "맞팔과 한쪽에만 있는 계정의 합계를 확인합니다. 수집 완료 여부는 상단 판정을 확인하세요.";
     elements.integrityBadge.dataset.tone = integrityPassed ? "success" : state === "reference" ? "info" : ["partial", "retry", "superseded"].includes(state) ? "warning" : state === "error" ? "danger" : "neutral";
   }
 
@@ -313,7 +314,7 @@
     const record = rawRecord ? normalizeRecord(rawRecord) : null;
     const state = deriveState(record);
     renderVerdict(state, record);
-    const visibleRecord = state === "stale-profile" ? null : record;
+    const visibleRecord = ["stale-profile", "no-tab"].includes(state) ? null : record;
     renderCounts(state, visibleRecord);
     renderAccountDetails(visibleRecord, state);
     renderDiagnostics(visibleRecord);
@@ -358,6 +359,8 @@
   function inspectTarget() {
     if (!chrome.devtools?.inspectedWindow?.eval) return;
     chrome.devtools.inspectedWindow.eval("location.href", (href, exceptionInfo) => {
+      const previousProfile = currentProfile;
+      const previousValid = validInstagramTarget;
       if (exceptionInfo?.isException) {
         validInstagramTarget = false;
         currentProfile = "";
@@ -366,7 +369,7 @@
       }
       currentProfile = globalThis.IGRunContext?.profileFromInstagramUrl(typeof href === "string" ? href : "") || "";
       validInstagramTarget = Boolean(currentProfile);
-      render();
+      if (currentProfile !== previousProfile || validInstagramTarget !== previousValid) render();
     });
   }
 
@@ -398,6 +401,17 @@
   });
 
   elements.copyButton.addEventListener("click", copyDiagnostic);
+  chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
+    if (tabId === inspectedTabId && (changeInfo.url || changeInfo.status === "complete")) inspectTarget();
+  });
+  // Visible-panel polling also catches same-document navigation when tab URL access is unavailable.
+  const contextTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    inspectTarget();
+    if (rawRecord) elements.updatedAt.textContent = globalThis.IGRunContext?.formatRelativeTime(rawRecord.updatedAt) || "—";
+  }, 1500);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) inspectTarget(); });
+  window.addEventListener("pagehide", () => window.clearInterval(contextTimer), { once: true });
   chrome.devtools?.network?.onNavigated?.addListener(() => inspectTarget());
   inspectTarget();
   readInitialState();

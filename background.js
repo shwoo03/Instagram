@@ -508,16 +508,26 @@ function sanitizeDebuggerPagination(value) {
   };
 }
 
+function sanitizeCaptureHealth(value) {
+  if (!value || typeof value !== "object") return null;
+  return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
+    pendingCount: getSafeNonNegativeInteger(value[mode]?.pendingCount),
+    failedCount: getSafeNonNegativeInteger(value[mode]?.failedCount)
+  }]));
+}
+
 function relayDebuggerPayload(tabId, payload) {
   const safeId = getValidTabId(tabId);
   if (safeId === null) return;
-  chrome.tabs.sendMessage(safeId, payload, () => {
-    void chrome.runtime.lastError;
-  });
+  return new Promise((resolve, reject) => chrome.tabs.sendMessage(safeId, payload, (response) => {
+    const error = chrome.runtime.lastError;
+    if (error || response?.ok === false || response?.ignored) reject(new Error("capture-delivery-failed"));
+    else resolve(response);
+  }));
 }
 
 function relayDebuggerEvidence(evidence) {
-  relayDebuggerPayload(evidence.tabId, {
+  return relayDebuggerPayload(evidence.tabId, {
     type: "IG_DEBUGGER_USERNAMES",
     source: "debugger-network",
     schemaVersion: 1,
@@ -531,6 +541,7 @@ function relayDebuggerEvidence(evidence) {
     mode: ["followers", "following", "active"].includes(evidence.mode) ? evidence.mode : "unknown",
     confidence: evidence.confidence === "exact" ? "exact" : "candidate",
     pagination: sanitizeDebuggerPagination(evidence.pagination),
+    requestOrder: Number(evidence.requestOrder) || 0,
     capturedAt: evidence.capturedAt || new Date().toISOString()
   });
 }
@@ -550,8 +561,9 @@ function relayDebuggerStatus(status) {
     reason: String(status.reason || "unknown").slice(0, 100),
     error: String(status.error || "").slice(0, 120),
     httpStatus: getSafeNonNegativeInteger(status.httpStatus),
+    listHealth: sanitizeCaptureHealth(status.listHealth),
     capturedAt: status.capturedAt || new Date().toISOString()
-  });
+  })?.catch(() => {});
 }
 
 const debuggerController = globalThis.IGDebuggerCapture.createController({
@@ -630,6 +642,8 @@ function buildRelayPayload(message) {
       schemaVersion: 1,
       reason: message.reason || "",
       stats: message.stats || null,
+      captureHealth: sanitizeCaptureHealth(message.captureHealth),
+      failedMode: ["followers", "following"].includes(message.failedMode) ? message.failedMode : "",
       error: message.error || "",
       capturedAt: message.capturedAt || new Date().toISOString()
     };
@@ -653,6 +667,7 @@ function buildRelayPayload(message) {
         terminal: Boolean(message.pagination.terminal),
         terminalReason: String(message.pagination.terminalReason || "").slice(0, 80)
       } : null,
+      requestOrder: Number(message.requestOrder) || 0,
       capturedAt: message.capturedAt || new Date().toISOString()
     };
   }
@@ -776,17 +791,35 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === "loading") {
-    debuggerController.stop(tabId, "tab-navigated").catch(() => {});
-    automaticCaptureAttempts.delete(tabId);
-    devtoolsTabs.delete(tabId);
-    schedulePersistDevtoolsTabs();
-    const progressKey = getRunProgressKey(tabId);
-    if (progressKey && chrome.storage?.session) {
-      chrome.storage.session.remove(progressKey).catch(() => {});
-    }
+async function reconcileTabNavigation(tabId) {
+  const attempt = automaticCaptureAttempts.get(tabId);
+  const session = debuggerController.getSession(tabId);
+  const progressKey = getRunProgressKey(tabId);
+  const stored = await chrome.storage.session.get(progressKey);
+  const progress = stored[progressKey];
+  if (!attempt && !session && !progress) return;
+  let context = null;
+  try {
+    context = await chrome.tabs.sendMessage(tabId, { type: "IG_COLLECTION_CONTEXT", source: "extension-background" });
+  } catch { /* A new document has no collector listener. */ }
+  // A list modal may change history and emit loading without replacing the document.
+  const runId = session?.runId || progress?.runId;
+  const profile = session?.profile || progress?.profile;
+  if (context?.runId === runId && context?.profile === profile) return;
+  if (automaticCaptureAttempts.get(tabId) !== attempt) return;
+  const latest = (await chrome.storage.session.get(progressKey))[progressKey];
+  if (latest?.runId !== progress?.runId) return;
+  debuggerController.stop(tabId, "tab-navigated").catch(() => {});
+  automaticCaptureAttempts.delete(tabId);
+  devtoolsTabs.delete(tabId);
+  schedulePersistDevtoolsTabs();
+  if (progressKey && chrome.storage?.session && context?.runId !== runId) {
+    chrome.storage.session.remove(progressKey).catch(() => {});
   }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status || changeInfo.url) reconcileTabNavigation(tabId).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -820,6 +853,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       captureMode: preparation?.mode || "fallback"
     });
     return false;
+  }
+
+  if (message.type === "IG_DEBUGGER_SETTLE") {
+    const tabId = getValidTabId(sender?.tab?.id);
+    if (message.source !== "instagram-collector" || message.schemaVersion !== 1 || tabId === null) {
+      sendResponse({ ok: false, reason: "invalid-settle-request" });
+      return false;
+    }
+    debuggerController.settle(tabId, String(message.runId || ""))
+      .then(sendResponse).catch(() => sendResponse({ ok: false, reason: "capture-settle-failed" }));
+    return true;
   }
 
   if (message.type === "IG_DEBUGGER_STOP") {

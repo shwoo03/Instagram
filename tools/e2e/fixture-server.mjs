@@ -10,7 +10,7 @@ export const EXPECTED = {
   followingOnly: 6
 };
 
-function pageHtml({ displayedCountGap = 0 } = {}) {
+function pageHtml({ displayedCountGap = 0, captureNetwork = false } = {}) {
   const displayedFollowers = FOLLOWERS.length + displayedCountGap;
   const displayedFollowing = FOLLOWING.length + displayedCountGap;
   return `<!doctype html>
@@ -57,6 +57,9 @@ function pageHtml({ displayedCountGap = 0 } = {}) {
       function appendRows() {
         const users = DATA[kind];
         const next = users.slice(rendered, rendered + PAGE_SIZE);
+        if (${captureNetwork}) {
+          void fetch('/api/v1/friendships/123/' + kind + '/?offset=' + rendered).then((response) => response.text());
+        }
         for (const username of next) {
           const row = document.createElement('div');
           row.className = 'row';
@@ -91,9 +94,17 @@ function pageHtml({ displayedCountGap = 0 } = {}) {
 </html>`;
 }
 
-export async function startFixtureServer() {
+export async function startFixtureServer({ captureNetwork = false } = {}) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const mode = /\/api\/v1\/friendships\/123\/(followers|following)\//.exec(url.pathname)?.[1];
+    if (captureNetwork && mode) {
+      const users = mode === 'followers' ? FOLLOWERS : FOLLOWING;
+      const offset = Number(url.searchParams.get('offset')) || 0;
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ users: users.slice(offset, offset + 12).map((username) => ({ username })), has_more: offset + 12 < users.length }));
+      return;
+    }
     if (url.pathname === '/favicon.ico') {
       res.writeHead(204);
       res.end();
@@ -104,7 +115,8 @@ export async function startFixtureServer() {
       'cache-control': 'no-store'
     });
     res.end(pageHtml({
-      displayedCountGap: Number(url.searchParams.get('display_gap') || 0)
+      displayedCountGap: Number(url.searchParams.get('display_gap') || 0),
+      captureNetwork
     }));
   });
 

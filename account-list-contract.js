@@ -61,6 +61,9 @@
         level,
         source: EVIDENCE_SOURCES.has(item?.source) ? item.source : "unknown"
       });
+      if (["dom_not_network", "ambiguous_network", "insufficient_evidence"].includes(item?.reason)) {
+        byUsername.get(username).reason = item.reason;
+      }
     }
 
     return Object.freeze(usernames.map((username) => {

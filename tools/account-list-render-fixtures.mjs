@@ -34,7 +34,7 @@ const record = {
         { username: 'follower_two', level: 'confirmed', source: 'page-network' }
       ],
       followersCandidates: [
-        { username: 'candidate_follower_a', level: 'candidate', source: 'dom' },
+        { username: 'candidate_follower_a', level: 'candidate', source: 'dom', reason: 'dom_not_network' },
         { username: 'candidate_follower_b', level: 'candidate', source: 'unknown' }
       ],
       followingCandidates: [
@@ -72,15 +72,19 @@ try {
     const page = await browser.newPage();
     await page.setViewport({ width: testCase.width, height: testCase.height });
     await page.evaluateOnNewDocument((storedRecord, isPanel) => {
+      globalThis.__testHref = 'https://www.instagram.com/test_profile/';
+      globalThis.__ticks = [];
+      globalThis.__tabUpdates = [];
+      window.setInterval = (callback) => globalThis.__ticks.push(callback);
       globalThis.chrome = {
-        tabs: { query: async () => [{ id: 7, url: 'https://www.instagram.com/test_profile/' }] },
+        tabs: { query: async () => [{ id: 7, url: globalThis.__testHref }], onUpdated: { addListener: (callback) => globalThis.__tabUpdates.push(callback) } },
         storage: {
           session: { get: async (key) => ({ [key]: storedRecord }) },
           onChanged: { addListener() {} }
         },
         runtime: { sendMessage: async () => ({ ok: true }) },
         devtools: isPanel
-          ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback('https://www.instagram.com/test_profile/', null) } }
+          ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback(globalThis.__testHref, null) } }
           : undefined
       };
     }, record, testCase.panel);
@@ -135,6 +139,8 @@ try {
     await page.click('#accountDetailHost details:nth-of-type(3) > summary');
     const candidateHeadings = await page.$$eval('#accountDetailHost details:nth-of-type(3) h4', (items) => items.map((item) => item.textContent));
     assert.deepEqual(candidateHeadings, ['팔로워 후보 · 2명', '팔로잉 후보 · 2명']);
+    await page.click('#accountDetailHost details:nth-of-type(3) .account-evidence-button');
+    assert.match(await page.$eval('#accountDetailHost details:nth-of-type(3) .account-evidence-reason', (item) => item.textContent), /수집된 네트워크 목록에서 확인되지/);
 
     const layout = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
@@ -146,6 +152,25 @@ try {
     const openScreenshot = `/tmp/ig-account-lists-${testCase.file.replace('.html', '')}-${testCase.width}-open.png`;
     await page.screenshot({ path: openScreenshot, fullPage: true });
     results.push({ ...testCase, closedScreenshot, evidenceScreenshot, openScreenshot, ...layout });
+    await page.evaluate(() => {
+      const now = Date.now();
+      Date.now = () => now + 120000;
+      globalThis.__ticks.forEach((tick) => tick());
+    });
+    assert.match(await page.$eval('#runAge, #updatedAt', (item) => item.textContent), /분 전/);
+    assert.equal(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list li', (items) => items.length), 25, 'age refresh must preserve expanded lists');
+    for (const [profile, expectedState] of [['other_profile', '이전 결과'], ['test_profile', '확정']]) {
+      await page.evaluate((name) => {
+        globalThis.__testHref = `https://www.instagram.com/${name}/`;
+        globalThis.__tabUpdates.forEach((listener) => listener(7, { url: globalThis.__testHref }));
+      }, profile);
+      assert.equal(await page.$eval('#stateBadge', (item) => item.textContent), expectedState);
+    }
+    if (testCase.panel) {
+      await page.evaluate(() => { globalThis.__testHref = 'https://www.instagram.com/explore/'; globalThis.__ticks.forEach((tick) => tick()); });
+      assert.equal(await page.$eval('#copyButton', (item) => item.disabled), true);
+      assert.equal(await page.$eval('#accountDetailsSection', (item) => item.hidden), true);
+    }
     await page.close();
   }
 

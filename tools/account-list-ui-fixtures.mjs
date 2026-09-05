@@ -43,5 +43,7 @@ assert.equal(ui.getEvidencePresentation('iFollowButNotReturned', { level: 'confi
 assert.match(ui.getEvidencePresentation('iFollowButNotReturned', { level: 'confirmed', source: 'debugger' }).reasonKo, /자동 네트워크/);
 assert.match(ui.getEvidencePresentation('followersCandidates', { level: 'candidate', source: 'dom' }).reasonKo, /최종 비교에서는 제외/);
 assert.equal(ui.buildViewModel(null), null);
+assert.match(ui.getEvidencePresentation('followersCandidates', { source: 'dom', reason: 'dom_not_network' }).reasonKo, /수집된 네트워크 목록에서 확인되지/);
+assert.match(ui.getEvidencePresentation('followingCandidates', { source: 'debugger', reason: 'ambiguous_network' }).reasonKo, /구성원인지 확정하지/);
 
 console.log('account list UI fixtures passed');

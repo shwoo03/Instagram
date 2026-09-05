@@ -359,6 +359,9 @@
         const gap = expected.value === null ? null : expected.value - confirmedCount;
         const assistedGap = expected.value === null ? null : expected.value - assistedTotalCount;
         const fallbackBlockReasons = [];
+        const capturePending = finiteNonNegativeInteger(input.capturePendingCount);
+        const captureFailed = finiteNonNegativeInteger(input.captureFailedCount);
+        if (capturePending || captureFailed) fallbackBlockReasons.push("capture_unresolved");
 
         if (!expected.exact) fallbackBlockReasons.push("expected_count_not_exact");
         if (!evidence.strictEligible) fallbackBlockReasons.push("no_confirmed_cdp_evidence");
@@ -378,6 +381,10 @@
         if (input.integrityOk === false) {
             state = "RETRY_REQUIRED";
             reasons.push("integrity_failed");
+        } else if (capturePending || captureFailed) {
+            state = "PARTIAL";
+            if (capturePending) reasons.push("capture_pending");
+            if (captureFailed) reasons.push("capture_failed");
         } else if ([
             "DEVTOOLS_CONNECTED_NO_PAYLOAD",
             "DEVTOOLS_CANDIDATES_ONLY",
@@ -386,7 +393,7 @@
         ].includes(evidence.code)) {
             state = "RETRY_REQUIRED";
             reasons.push("cdp_connected_no_exact_payload");
-        } else if (evidence.strictEligible && expected.exact && gap === 0) {
+        } else if (evidence.strictEligible && expected.exact && gap === 0 && unsafeReasons.length === 0) {
             state = "CONFIRMED_EXACT_COUNT";
             reasons.push("exact_displayed_count_matches_cdp");
         } else if (
@@ -417,6 +424,8 @@
 
         return deepFreeze({
             state,
+            capturePendingCount: capturePending,
+            captureFailedCount: captureFailed,
             complete: state === "CONFIRMED_EXACT_COUNT" || state === "CONFIRMED_NETWORK_END" || state === "ASSISTED_COMPLETE",
             strictComplete: state === "CONFIRMED_EXACT_COUNT" || state === "CONFIRMED_NETWORK_END",
             expectedCount: expected.value,
@@ -503,6 +512,25 @@
             else rejected.push(String(raw ?? ""));
         }
         return { users: normalized, rejected };
+    }
+
+    function mergePaginationEvidence(current = {}, incoming = {}, source = "unknown", order = 0) {
+        const orders = { ...current.requestOrders };
+        const nextOrder = Number(order) || 0;
+        if (nextOrder > 0 && nextOrder < (orders[source] || 0)) return { ...current };
+        if (nextOrder > 0 && nextOrder === orders[source] &&
+            (current.terminal !== (incoming.terminal === true) || current.hasMore !== incoming.hasMore)) {
+            return { ...current, recognized: false, terminal: false, hasMore: null, terminalReason: "conflicting_same_order" };
+        }
+        if (nextOrder > 0) orders[source] = nextOrder;
+        return {
+            ...current,
+            requestOrders: orders,
+            recognized: incoming.recognized === true,
+            hasMore: typeof incoming.hasMore === "boolean" ? incoming.hasMore : null,
+            terminal: incoming.recognized === true && incoming.terminal === true,
+            terminalReason: incoming.terminalReason || "pagination_unrecognized"
+        };
     }
 
     function sortedDifference(left, right) {
@@ -597,6 +625,7 @@
     }
 
     const namespace = Object.freeze({
+        mergePaginationEvidence,
         parseDisplayedCount,
         extractPaginationEvidence,
         assessListCompletion,

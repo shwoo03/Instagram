@@ -19,6 +19,7 @@ assert.deepEqual(
     'classifyEvidence',
     'compareStrictSets',
     'extractPaginationEvidence',
+    'mergePaginationEvidence',
     'parseDisplayedCount',
     'validateCompareIntegrity'
   ]
@@ -339,4 +340,17 @@ const missingIntegrityVerdict = engine.buildTrustVerdict({
 });
 assert.equal(missingIntegrityVerdict.code, 'RETRY_REQUIRED', 'confirmation requires explicit integrity evidence');
 
+let pageState = engine.mergePaginationEvidence({}, { recognized: true, terminal: true, hasMore: false }, 'debugger', 20);
+pageState = engine.mergePaginationEvidence(pageState, { recognized: true, terminal: false, hasMore: true }, 'debugger', 10);
+assert.equal(pageState.terminal, true, 'late earlier response must not overwrite newer pagination');
+const sameTime = engine.mergePaginationEvidence(pageState, { recognized: true, terminal: false, hasMore: true }, 'debugger', 20);
+assert.equal(sameTime.terminal, false, 'equal timestamps with conflicting responses cannot prove completion');
+pageState = engine.mergePaginationEvidence(pageState, { recognized: false }, 'debugger', 30);
+assert.equal(pageState.terminal, false, 'new unrecognized response must invalidate old terminal proof');
+for (const health of [{ capturePendingCount: 1 }, { captureFailedCount: 1 }]) {
+  const result = engine.assessListCompletion({ expectedCount: 2, confirmedCount: 2, debuggerExactPayloadCount: 1, ...health });
+  assert.equal(result.state, 'PARTIAL', 'matching counts cannot hide unresolved capture');
+  assert.equal(result.fallbackAllowed, false);
+}
 console.log('accuracy engine fixtures passed');
+await import('./navigation-fixtures.mjs');
