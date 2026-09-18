@@ -79,12 +79,19 @@
       : "partial";
     const result = { relationshipSet };
     const truncated = {};
+    const totals = {};
     const evidence = {};
 
     for (const key of LIST_KEYS) {
       const list = sanitizeUsernameList(value[key], limit);
       result[key] = list.usernames;
       truncated[key] = list.truncated || value.truncated?.[key] === true;
+      // Retain the pre-cap count across background/UI sanitization. Older
+      // truncated records have no trustworthy total; keep that unknown.
+      const suppliedTotal = value.totals?.[key];
+      totals[key] = value.truncated?.[key] === true
+        ? (Number.isSafeInteger(suppliedTotal) && suppliedTotal >= list.totalValid ? suppliedTotal : null)
+        : list.totalValid;
       const level = key.endsWith("Candidates")
         ? "candidate"
         : relationshipSet === "strict" ? "confirmed" : "reference";
@@ -92,6 +99,7 @@
     }
 
     result.truncated = Object.freeze(truncated);
+    result.totals = Object.freeze(totals);
     result.evidence = Object.freeze(evidence);
     return Object.freeze(result);
   }

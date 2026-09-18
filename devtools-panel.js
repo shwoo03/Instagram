@@ -13,7 +13,7 @@
   });
 
   const elementIds = [
-    "stateBadge", "copyButton", "verdictIcon", "verdictKicker", "verdictTitle",
+    "stateBadge", "copyButton", "stopButton", "verdictIcon", "verdictKicker", "verdictTitle",
     "verdictDescription", "runProfile", "updatedAt", "integrityBadge", "followersHeadline",
     "followersExpected", "followersConfirmed", "followersAssisted", "followersCandidates",
     "followersPagination", "followingHeadline", "followingExpected", "followingConfirmed",
@@ -32,6 +32,7 @@
   let rawRecord = null;
   let validInstagramTarget = true;
   let currentProfile = "";
+  let stopping = false;
 
   function isObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -321,6 +322,26 @@
     renderWarnings(visibleRecord, state);
     renderTimeline(visibleRecord);
     elements.copyButton.disabled = !visibleRecord;
+    elements.stopButton.hidden = state !== "running";
+    elements.stopButton.disabled = stopping || !rawRecord?.runId;
+    elements.stopButton.textContent = stopping ? "중단 처리 중…" : "수집 중단";
+  }
+
+  async function stopCollection() {
+    if (stopping || !rawRecord?.runId || deriveState(normalizeRecord(rawRecord)) !== "running") return;
+    stopping = true;
+    render();
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "IG_STOP_COLLECTION", tabId: inspectedTabId, runId: rawRecord.runId
+      });
+      if (!response?.ok) throw new Error("stop-rejected");
+      announce("수집 중단을 요청했습니다. 현재까지의 부분 결과를 저장합니다.");
+    } catch {
+      stopping = false;
+      render();
+      announce("중단 요청을 전달하지 못했습니다. 현재 실행 상태를 확인해 주세요.", true);
+    }
   }
 
   function privacySafeDiagnostic(record) {
@@ -393,6 +414,7 @@
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "session" || !storageKey || !Object.hasOwn(changes, storageKey)) return;
     rawRecord = changes[storageKey].newValue || null;
+    if (!rawRecord || rawRecord.stage === "finished") stopping = false;
     render();
     if (rawRecord) {
       const record = normalizeRecord(rawRecord);
@@ -401,6 +423,7 @@
   });
 
   elements.copyButton.addEventListener("click", copyDiagnostic);
+  elements.stopButton.addEventListener("click", stopCollection);
   chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
     if (tabId === inspectedTabId && (changeInfo.url || changeInfo.status === "complete")) inspectTarget();
   });

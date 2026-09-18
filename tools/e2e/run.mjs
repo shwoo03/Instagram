@@ -208,6 +208,22 @@ async function scenarioRateLimit(browser, origin) {
   await new Promise((resolve) => setTimeout(resolve, 800));
   assert(logs.some((line) => line.includes('요청 제한(429) 신호 감지')), 'missing 429 detection Korean log');
   assert(logs.some((line) => line.includes('일시정지')), 'missing pause Korean log');
+  // Allow collection to enter its rate-limit sleep, then interrupt it without
+  // waiting for the 60-second backoff. No debugger session is required.
+  await new Promise((resolve) => setTimeout(resolve, 4500));
+  const worker = await getWorker(browser);
+  const startedAt = Date.now();
+  const response = await worker.evaluate(async (id) => {
+    const context = await chrome.tabs.sendMessage(id, { type: 'IG_COLLECTION_CONTEXT', source: 'extension-background' });
+    return chrome.tabs.sendMessage(id, { type: 'IG_CANCEL_COLLECTION', source: 'extension-background', runId: context.runId });
+  }, tabId);
+  assert.equal(response.ok, true);
+  const progress = await waitForRunProgress(browser, tabId, 5000);
+  assert.equal(progress.status, 'partial_cancelled');
+  assert.equal(progress.verdict.code, 'PARTIAL');
+  assert(Date.now() - startedAt < 5000, 'rate-limit backoff should be interruptible');
+  const result = await waitForResult(browser, 5000, logs);
+  assert.equal(result.trustVerdict.code, 'PARTIAL');
   await page.close();
 }
 

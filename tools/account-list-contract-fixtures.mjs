@@ -22,6 +22,15 @@ const capped = contract.sanitizeUsernameList(['c', 'b', 'a'], 2);
 assert.deepEqual(Array.from(capped.usernames), ['a', 'b']);
 assert.equal(capped.truncated, true);
 
+const large = contract.sanitizeAccounts({ iFollowButNotReturned: Array.from({ length: 1005 }, (_, i) => `user_${i}`) });
+assert.equal(large.iFollowButNotReturned.length, 1000);
+assert.equal(large.totals.iFollowButNotReturned, 1005);
+assert.equal(contract.sanitizeAccounts(contract.sanitizeAccounts(large)).totals.iFollowButNotReturned, 1005);
+const legacy = contract.sanitizeAccounts({ followersCandidates: ['one'], truncated: { followersCandidates: true } });
+assert.equal(legacy.totals.followersCandidates, null);
+assert.equal(contract.sanitizeAccounts(legacy).totals.followersCandidates, null);
+assert.equal(contract.sanitizeAccounts({ ...legacy, totals: { followersCandidates: -1 } }).totals.followersCandidates, null);
+
 const accounts = contract.sanitizeAccounts({
   relationshipSet: 'assisted',
   iFollowButNotReturned: ['Following.Only', 'bad/name'],

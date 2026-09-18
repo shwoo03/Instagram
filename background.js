@@ -1,8 +1,9 @@
-importScripts("accuracy-engine.js", "account-list-contract.js", "network-payload-parser.js", "debugger-capture.js");
+importScripts("accuracy-engine.js", "account-list-contract.js", "network-payload-parser.js", "debugger-capture.js", "session-retention.js");
 
 const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
 const RUN_PROGRESS_PREFIX = "ig_run_progress:tab:";
 const automaticCaptureAttempts = new Map();
+const sessionStore = globalThis.IGSessionRetention.createStore(chrome.storage.session);
 
 function getValidTabId(value) {
   const tabId = Number(value);
@@ -128,7 +129,7 @@ function storeRunProgress(message, sender, sendResponse) {
     return;
   }
 
-  chrome.storage.session.set({ [key]: progress }).then(() => {
+  sessionStore.set({ [key]: progress }).then(() => {
     sendResponse({ ok: true, key });
   }).catch((error) => {
     sendResponse({ ok: false, error: error?.message || "run-progress-storage-failed" });
@@ -594,8 +595,8 @@ function storeRunSnapshot(message, sendResponse) {
   };
   budgeted.snapshot.storage = storageInfo;
 
-  chrome.storage.session.set(buildSnapshotStoragePatch(key, budgeted.snapshot, budgeted.approxBytes)).then(() => {
-    sendResponse({ ok: true, key, approxBytes: budgeted.approxBytes, truncatedSections: budgeted.truncatedSections });
+  sessionStore.set(buildSnapshotStoragePatch(key, budgeted.snapshot, budgeted.approxBytes)).then(({ evictedCount }) => {
+    sendResponse({ ok: true, key, approxBytes: budgeted.approxBytes, truncatedSections: budgeted.truncatedSections, evictedCount });
   }).catch((error) => {
     const message = error?.message || "";
     if (/quota/i.test(message) && !budgeted.truncatedSections.includes("minimal")) {
@@ -606,8 +607,8 @@ function storeRunSnapshot(message, sendResponse) {
         truncatedSections: [...budgeted.truncatedSections, "minimal-after-quota-error"],
         budgetBytes: SNAPSHOT_BUDGET_BYTES
       };
-      chrome.storage.session.set(buildSnapshotStoragePatch(key, minimal, approxBytes)).then(() => {
-        sendResponse({ ok: true, key, approxBytes, truncatedSections: minimal.storage.truncatedSections });
+      sessionStore.set(buildSnapshotStoragePatch(key, minimal, approxBytes)).then(({ evictedCount }) => {
+        sendResponse({ ok: true, key, approxBytes, truncatedSections: minimal.storage.truncatedSections, evictedCount });
       }).catch((retryError) => {
         sendResponse({ ok: false, error: retryError?.message || "storage-session-set-failed" });
       });
@@ -829,6 +830,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "IG_START_COLLECTION") {
     startCollectionFromUi(message, sendResponse);
+    return true;
+  }
+
+  if (message.type === "IG_STOP_COLLECTION") {
+    const tabId = getValidTabId(message.tabId);
+    // Only extension UI may request cancellation, and only for the displayed run.
+    const uiUrls = ["popup.html", "devtools-panel.html"].map((file) => chrome.runtime.getURL(file));
+    if (tabId === null || !uiUrls.includes(sender?.url) || sender?.tab ||
+        typeof message.runId !== "string" || !message.runId || message.runId.length > 100) {
+      sendResponse({ ok: false, error: "invalid-stop-request" });
+      return false;
+    }
+    chrome.tabs.sendMessage(tabId, {
+      type: "IG_CANCEL_COLLECTION", source: "extension-background", runId: message.runId
+    }).then((response) => sendResponse(response || { ok: false, error: "collector-unavailable" }))
+      .catch(() => sendResponse({ ok: false, error: "collector-unavailable" }));
     return true;
   }
 

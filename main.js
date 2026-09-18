@@ -1,6 +1,23 @@
 {
     // --- [공통 도우미 함수: 랜덤 대기] ---
-    const wait = (base, jitter = 0) => new Promise(resolve => setTimeout(resolve, base + Math.random() * jitter));
+    let cancellationRequested = false;
+    const pendingWaits = new Set();
+    function throwIfCancelled() {
+        if (cancellationRequested) throw new Error("collection_cancelled");
+    }
+    const wait = (base, jitter = 0) => new Promise((resolve, reject) => {
+        if (cancellationRequested) return reject(new Error("collection_cancelled"));
+        const cancel = () => {
+            clearTimeout(timer);
+            pendingWaits.delete(cancel);
+            reject(new Error("collection_cancelled"));
+        };
+        const timer = setTimeout(() => {
+            pendingWaits.delete(cancel);
+            resolve();
+        }, base + Math.random() * jitter);
+        pendingWaits.add(cancel);
+    });
 
     const USERNAME_RE = /^[a-zA-Z0-9._]{1,30}$/;
     const FOLLOWERS_URL_RE = /(friendships|followers|following|graphql)/i;
@@ -344,6 +361,7 @@
     }
 
     function isRunSuperseded() {
+        throwIfCancelled();
         return window.__igFollowerActiveRunId !== state.runId;
     }
 
@@ -1214,7 +1232,7 @@
                     : "";
             if (!/followers|following/.test(mode)) return;
 
-            if (window.__igFollowerRunInProgress !== true) {
+            if (cancellationRequested || window.__igFollowerRunInProgress !== true) {
                 state.pageNetworkBridge.postRunIgnoredPayloadCount++;
                 state.pageNetworkBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
                 if (!state.pageNetworkBridge.postRunNoticeShown) {
@@ -1441,6 +1459,7 @@
     }
 
     function ingestApiResponse(payloadText, source = "network", targetSetMode = "followers", options = {}) {
+        if (cancellationRequested) return;
         if (!payloadText) return 0;
         if (typeof payloadText === "string") {
             if (payloadText.length > MAX_BODY_CHARS) return 0;
@@ -1585,7 +1604,7 @@
         if (message.type !== "IG_DEBUGGER_USERNAMES" || !Array.isArray(message.usernames)) {
             return false;
         }
-        if (window.__igFollowerRunInProgress !== true) {
+        if (cancellationRequested || window.__igFollowerRunInProgress !== true) {
             state.debuggerBridge.postRunIgnoredPayloadCount++;
             state.debuggerBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
             if (!state.debuggerBridge.postRunNoticeShown) {
@@ -1656,6 +1675,19 @@
         }
 
         const handler = (message, sender, sendResponse) => {
+            if (message?.type === "IG_CANCEL_COLLECTION" && message.source === "extension-background") {
+                if (message.runId !== state.runId || window.__igFollowerActiveRunId !== state.runId ||
+                    window.__igFollowerRunInProgress !== true) {
+                    sendResponse({ ok: false, error: "run-not-active" });
+                    return false;
+                }
+                cancellationRequested = true;
+                for (const cancel of pendingWaits) cancel();
+                recordRunEvent("user_cancelled");
+                console.log("🛑 수집 중단을 요청했습니다. 현재까지의 부분 결과를 저장합니다.");
+                sendResponse({ ok: true });
+                return false;
+            }
             if (message?.type === "IG_COLLECTION_CONTEXT" && message.source === "extension-background") {
                 sendResponse({ runId: state.runId, profile: getProfileKey() });
                 return false;
@@ -1763,7 +1795,7 @@
                 return false;
             }
 
-            if (window.__igFollowerRunInProgress !== true) {
+            if (cancellationRequested || window.__igFollowerRunInProgress !== true) {
                 state.devtoolsBridge.postRunIgnoredPayloadCount++;
                 state.devtoolsBridge.lastPayloadAt = message.capturedAt || new Date().toISOString();
                 if (!state.devtoolsBridge.postRunNoticeShown) {
@@ -3857,7 +3889,7 @@
         const confirmedCount = getStrictUsers(mode).length;
         const assistedTotalCount = getAssistedUsers(mode).length;
         const modeEndReason = mode === "following" ? state.lastFollowingScrollEndReason : state.lastFollowersScrollEndReason;
-        const globallyUnsafeEndReasons = new Set(["rate_limited", "time_cap_reached", "profile_changed", "scroll_box_detached", "modal_closed", "run_superseded"]);
+        const globallyUnsafeEndReasons = new Set(["rate_limited", "time_cap_reached", "profile_changed", "scroll_box_detached", "modal_closed", "run_superseded", "user_cancelled"]);
         const endReason = globallyUnsafeEndReasons.has(state.lastScrollEndReason) ? state.lastScrollEndReason : modeEndReason;
         const domTierCandidateFilter = (username) => {
             const sources = Array.from(state.userProvenance[mode]?.get(username)?.sources || []);
@@ -3929,7 +3961,13 @@
         const followersCompletion = getListCompletionAssessment("followers", state.expectedCounts.followers || 0);
         const followingCompletion = getListCompletionAssessment("following", state.expectedCounts.following || 0);
         const integrityOk = diffs?.integrity ? diffs.integrity.ok === true : undefined;
-        const verdict = globalThis.IGAccuracyEngine?.buildTrustVerdict({
+        const verdict = cancellationRequested ? {
+            code: "PARTIAL",
+            labelKo: "사용자 중단 · 부분 결과",
+            severity: "warning",
+            reasons: ["user_cancelled"],
+            recommendedActionKo: "수집을 중단해 현재까지 확인한 계정만 보존했습니다. 한쪽에만 있는 계정은 누락 때문에 잘못 분류될 수 있습니다."
+        } : globalThis.IGAccuracyEngine?.buildTrustVerdict({
             followersCompletion,
             followingCompletion,
             integrityOk
@@ -4221,6 +4259,7 @@
                     ? ` (약 ${Math.max(1, Math.round(response.approxBytes / 1024))}KB)`
                     : "";
                 console.log(`📦 확장 세션 저장 완료: ${response.key}${sizeLabel}`);
+                if (response.evictedCount > 0) console.log(`📦 저장 공간 확보를 위해 오래된 프로필 결과 ${response.evictedCount}개를 정리했습니다.`);
                 if (Array.isArray(response.truncatedSections) && response.truncatedSections.length > 0) {
                     console.log(`⚠️ 세션 스냅샷이 저장 한도 때문에 일부 절단되었습니다: ${response.truncatedSections.join(", ")}`);
                     console.log("ℹ️ 페이지 메모리(window.__igFollowerResult)에는 전체 데이터가 보존되어 있습니다.");
@@ -4339,6 +4378,7 @@
     }
 
     function finalizeIfProfileChanged(summary) {
+        throwIfCancelled();
         if (!hasProfileChanged()) return false;
 
         const currentProfile = getProfileKey();
@@ -4595,7 +4635,9 @@
         installExtensionMessageBridge();
         installPageNetworkBridgeListener();
         await bindAutomaticDebuggerCapture();
+        throwIfCancelled();
         summary.accuracyPreflight = await runAccuracyPreflight(summary);
+        throwIfCancelled();
         printAccuracyModeNotice(summary, "실행 시작");
         emitRunProgress("preflight", "running", summary, { force: true });
 
@@ -4770,6 +4812,7 @@
         if (finalizeIfProfileChanged(summary)) return;
         await settleCapturedResponses();
         await stopAutomaticDebuggerCapture("collection-settled");
+        throwIfCancelled();
         following = Array.from(state.followingUsers);
         followers = Array.from(state.collectedUsers);
         summary.followingCount = following.length;
@@ -4831,8 +4874,8 @@
         printSummary(summary);
         console.log("8) 전체 저장 완료");
         } catch (error) {
-            summary.status = "failed_unhandled_exception";
-            summary.lastError = error?.message || String(error);
+            summary.status = cancellationRequested ? "partial_cancelled" : "failed_unhandled_exception";
+            summary.lastError = cancellationRequested ? "사용자가 수집을 중단했습니다." : error?.message || String(error);
             summary.followersCount = state.collectedUsers.size;
             summary.followingCount = state.followingUsers.size;
             summary.followers = Array.from(state.collectedUsers);
@@ -4840,12 +4883,19 @@
             summary.followersScrollEndReason = state.lastFollowersScrollEndReason || state.lastScrollEndReason || null;
             summary.followingScrollEndReason = state.lastFollowingScrollEndReason || null;
             try {
+                if (cancellationRequested) {
+                    state.lastScrollEndReason = "user_cancelled";
+                    summary.diffs = { ...compareFollowSets(), reliability: "partial", warnings: [{
+                        code: "user_cancelled", severity: "warning",
+                        message: "수집 중단 전 확인한 부분 결과입니다. 한쪽 목록의 누락으로 관계 분류가 부정확할 수 있습니다."
+                    }] };
+                }
                 summary.accuracyMode = getAccuracyMode(summary);
                 persistFollowers(summary.followers, summary.diffs);
             } catch (persistError) {
                 console.log("❌ 예외 후 partial 저장에도 실패했습니다:", persistError?.message || String(persistError));
             }
-            console.log("❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
+            console.log(cancellationRequested ? "🛑 중단 전 부분 결과를 저장했습니다." : "❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
             printSummary(summary);
         } finally {
             await stopAutomaticDebuggerCapture(summary.status || "run-finished");

@@ -1,5 +1,18 @@
 # Handoff
 
+## Current handoff — 2026-09-18, v1.8.0
+
+The popup and DevTools panel now let the user stop collection and retain a clearly marked partial result. Saved account lists support username search and distinguish the full result count from the stored subset. Session storage removes older profile results when capacity is needed.
+
+- Cancellation is bound to the displayed run ID. It interrupts collection/backoff waits, rejects late usernames, preserves collected data, labels the verdict `PARTIAL`, and detaches automatic capture. It never treats an interrupted comparison as complete.
+- Search stays within each saved list (up to 1,000 usernames); it accepts an optional `@` and ignores case. Full totals survive repeated sanitization. Older truncated records without totals display `전체 수량 미상`. A missing search match is explicitly not proof of absence from the complete result.
+- `session-retention.js` serializes progress/snapshot writes. Snapshot saves target 8MB of total session use and 10 profile snapshots, pruning oldest results while protecting active profiles and the new/latest result. Progress avoids a full storage scan unless a quota error occurs. Existing minimal-snapshot fallback remains available; active results can prevent reaching the soft target.
+- Validation passed: `npm test`; all six `npm run e2e` scenarios; the expanded synthetic-429 scenario separately verified interruption in under five seconds; `npm run e2e:capture` verified actual popup cancellation, partial storage, detach, rejection of stale stop requests and late responses, restart and navigation cleanup; `npm run ui:e2e` verified search, missing matches, 1,005/1,000 totals, popup/panel stop controls, and no horizontal overflow at 320–1,024px. Search and running-state screenshots were visually inspected. `git diff --check` passed.
+- These are local fixture/Chrome checks, not fresh proof against live Instagram. Reload the unpacked extension, reload the Instagram profile tab, and reopen DevTools before using v1.8.0. Confirm one normal comparison and one manual stop.
+- Existing user changes in AGENTS.md, CLAUDE.md, docs/REFERENCES.md, docs/SECURITY.md, skill files and kit-refresh notes were preserved and excluded from the v1.8.0 commit.
+
+The sections below are historical session notes; this entry supersedes their current-state claims.
+
 ## Session metadata
 
 - Date: 2026-06-01

@@ -87,9 +87,44 @@ try {
   assert.equal(progress.accounts.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
   assert.equal(await w.evaluate((id) => debuggerController.hasSession(id), tabId), false);
   console.log('PASS actual popup -> debugger Network -> parser -> compare -> storage -> detach (36/30, mutual 24)');
+  await popup.$eval('#startButton', (button) => button.click());
+  const running = await until(() => w.evaluate(async (id) => {
+    const value = (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`];
+    return value?.stage === 'collecting_followers' && value.counts.followers.confirmed > 0 ? value : null;
+  }, tabId));
+  const staleStop = await popup.evaluate(({ tabId, runId }) => chrome.runtime.sendMessage({
+    type: 'IG_STOP_COLLECTION', tabId, runId
+  }), { tabId, runId: progress.runId });
+  assert.equal(staleStop.ok, false, 'previous run must not cancel current run');
+  await popup.waitForFunction(() => !document.querySelector('#stopButton').hidden && !document.querySelector('#stopButton').disabled);
+  const stoppedAt = Date.now();
+  await popup.$eval('#stopButton', (button) => button.click());
+  const stopped = await until(() => w.evaluate(async (id) => {
+    const value = (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`];
+    return value?.status === 'partial_cancelled' && value.stage === 'finished' ? value : null;
+  }, tabId), 10000);
+  assert(Date.now() - stoppedAt < 5000, 'cancel must interrupt waits promptly');
+  assert.equal(stopped.runId, running.runId);
+  assert.equal(stopped.verdict.code, 'PARTIAL');
+  assert.equal(stopped.accounts.relationshipSet, 'partial');
+  assert(stopped.counts.followers.confirmed >= running.counts.followers.confirmed, 'retain captured users');
+  assert.equal(await w.evaluate((id) => debuggerController.hasSession(id), tabId), false);
+  await until(() => w.evaluate(async (runId) => {
+    const value = (await chrome.storage.session.get('ig_follower_snapshot:fixtureprofile'))['ig_follower_snapshot:fixtureprofile'];
+    return value?.runId === runId && value.trustVerdict.code === 'PARTIAL';
+  }, stopped.runId));
+  const lateResponse = await w.evaluate((id) => chrome.tabs.sendMessage(id, {
+    type: 'IG_DEVTOOLS_USERNAMES', source: 'devtools-network', schemaVersion: 1,
+    mode: 'followers', status: 200, endpoint: 'instagram:followers:exact',
+    usernames: ['late_after_cancel'], pagination: { exactEndpoint: true, recognized: true, terminal: true, hasMore: false }
+  }), tabId);
+  assert(lateResponse?.ignored, 'late responses after cancellation must be ignored');
+  assert.deepEqual(await popup.evaluate(async (id) =>
+    (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`].counts, tabId), stopped.counts);
+  console.log('PASS popup cancellation -> partial preservation -> detach; stale cancel and late response rejected');
   // Real worker termination: session result survives and a popup action wakes it.
   await w.close();
-  assert.equal(await popup.evaluate(async (id) => (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`].runId, tabId), progress.runId);
+  assert.equal(await popup.evaluate(async (id) => (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`].runId, tabId), stopped.runId);
   await popup.$eval('#startButton', (button) => button.click());
   w = await worker();
   await until(() => w.evaluate((id) => debuggerController.hasSession(id), tabId));

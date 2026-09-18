@@ -1,5 +1,14 @@
 # Backlog
 
+## 2026-09-18 Selected usability improvements — v1.8.0
+
+- Done: stop collection from popup/panel, interrupt rate-limit waits, retain a partial result, detach capture, reject stale stop requests and late username messages.
+- Done: search within saved account lists; show original totals separately from the 1,000-name storage cap; preserve unknown totals for older truncated records.
+- Done: serialized session writes and oldest-result cleanup with an 8MB/10-profile target; protect active profiles and valid latest-result references; test quota pressure and write failure recovery.
+- Done: syntax/pure fixtures, six existing browser scenarios, expanded rate-limit interruption, actual Chrome capture/cancellation, and responsive UI checks.
+- Open: operator confirmation against live Instagram after reloading v1.8.0.
+- Deferred: broad module extraction and CI infrastructure. This change focuses on controls and reliability the local operator can use immediately.
+
 ## P1
 
 | ID | Area | Task | Status |

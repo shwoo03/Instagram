@@ -11,7 +11,8 @@
         "profile_changed",
         "scroll_box_detached",
         "modal_closed",
-        "run_superseded"
+        "run_superseded",
+        "user_cancelled"
     ]));
     const SAFE_DOM_END_REASONS = Object.freeze(new Set([
         "list_end_observed",

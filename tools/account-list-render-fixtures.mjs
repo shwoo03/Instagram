@@ -9,6 +9,7 @@ const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (fs.existsSync(macChrome) ? macChrome : undefined);
 const onlyUsers = Array.from({ length: 25 }, (_, index) => `only_${String(index).padStart(2, '0')}`);
 const record = {
+  runId: 'ui-test-run',
   schemaVersion: 1,
   profile: 'test_profile',
   status: 'completed',
@@ -75,14 +76,16 @@ try {
       globalThis.__testHref = 'https://www.instagram.com/test_profile/';
       globalThis.__ticks = [];
       globalThis.__tabUpdates = [];
+      globalThis.__storageListeners = [];
+      globalThis.__sentMessages = [];
       window.setInterval = (callback) => globalThis.__ticks.push(callback);
       globalThis.chrome = {
         tabs: { query: async () => [{ id: 7, url: globalThis.__testHref }], onUpdated: { addListener: (callback) => globalThis.__tabUpdates.push(callback) } },
         storage: {
           session: { get: async (key) => ({ [key]: storedRecord }) },
-          onChanged: { addListener() {} }
+          onChanged: { addListener(callback) { globalThis.__storageListeners.push(callback); } }
         },
-        runtime: { sendMessage: async () => ({ ok: true }) },
+        runtime: { sendMessage: async (message) => { globalThis.__sentMessages.push(message); return { ok: true }; } },
         devtools: isPanel
           ? { inspectedWindow: { tabId: 7, eval: (_code, callback) => callback(globalThis.__testHref, null) } }
           : undefined
@@ -136,6 +139,16 @@ try {
     await page.click('#accountDetailHost details:nth-of-type(1) .account-more-button');
     assert.equal(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list li', (items) => items.length), 25);
 
+    const searchSelector = '#accountDetailHost details:nth-of-type(1) input[type="search"]';
+    await page.type(searchSelector, '@ONLY_24');
+    assert.deepEqual(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list a', (items) => items.map((item) => item.href)), ['https://www.instagram.com/only_24/']);
+    await page.$eval(searchSelector, (input) => { input.value = 'not_present'; input.dispatchEvent(new Event('input')); });
+    assert.equal(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list li', (items) => items.length), 0);
+    assert.match(await page.$eval('#accountDetailHost details:nth-of-type(1) .account-search-status', (item) => item.textContent), /저장된 목록에 일치하는 계정이 없습니다/);
+    await page.$eval(searchSelector, (input) => { input.value = ''; input.dispatchEvent(new Event('input')); });
+    assert.equal(await page.$$eval('#accountDetailHost details:nth-of-type(1) .account-name-list li', (items) => items.length), 20);
+    await page.click('#accountDetailHost details:nth-of-type(1) .account-more-button');
+
     await page.click('#accountDetailHost details:nth-of-type(3) > summary');
     const candidateHeadings = await page.$$eval('#accountDetailHost details:nth-of-type(3) h4', (items) => items.map((item) => item.textContent));
     assert.deepEqual(candidateHeadings, ['팔로워 후보 · 2명', '팔로잉 후보 · 2명']);
@@ -166,6 +179,35 @@ try {
       }, profile);
       assert.equal(await page.$eval('#stateBadge', (item) => item.textContent), expectedState);
     }
+    await page.evaluate((storedRecord) => {
+      const accounts = IGAccountListContract.sanitizeAccounts({
+        ...storedRecord.accounts, iFollowButNotReturned: Array.from({ length: 1005 }, (_, i) => `large_${String(i).padStart(4, '0')}`)
+      });
+      globalThis.__storageListeners.forEach((listener) => listener({
+        'ig_run_progress:tab:7': { newValue: { ...storedRecord, counts: { ...storedRecord.counts, followingOnly: 1005 }, accounts } }
+      }, 'session'));
+    }, record);
+    assert.match(await page.$eval('#accountDetailHost details:first-of-type > summary', (item) => item.textContent), /1,005명/);
+    await page.click('#accountDetailHost details:first-of-type > summary');
+    assert.match(await page.$eval('#accountDetailHost details:first-of-type .account-list-scope', (item) => item.textContent), /전체 1,005명 · 저장된 1,000명/);
+    await page.type(searchSelector, 'large_1004');
+    assert.match(await page.$eval('#accountDetailHost details:first-of-type .account-search-status', (item) => item.textContent), /저장된 목록에/);
+    assert.match(await page.$eval('#accountDetailHost details:first-of-type .account-truncated-notice', (item) => item.textContent), /전체 결과에 없는 계정이라고 판단할 수 없습니다/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
+    await page.screenshot({ path: `/tmp/ig-improvements-${testCase.file.replace('.html', '')}-${testCase.width}.png`, fullPage: true });
+    await page.evaluate((storedRecord) => globalThis.__storageListeners.forEach((listener) => listener({
+      'ig_run_progress:tab:7': { newValue: { ...storedRecord, status: 'running', stage: 'collecting_followers', verdict: { code: 'RUNNING' } } }
+    }, 'session')), record);
+    assert.equal(await page.$eval('#stopButton', (item) => item.hidden || item.disabled), false);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
+    await page.screenshot({ path: `/tmp/ig-stop-${testCase.file.replace('.html', '')}-${testCase.width}.png`, fullPage: true });
+    await page.click('#stopButton');
+    assert.equal(await page.$eval('#stopButton', (item) => item.disabled), true);
+    assert.deepEqual(await page.evaluate(() => globalThis.__sentMessages.at(-1)), { type: 'IG_STOP_COLLECTION', tabId: 7, runId: 'ui-test-run' });
+    await page.evaluate((storedRecord) => globalThis.__storageListeners.forEach((listener) => listener({
+      'ig_run_progress:tab:7': { newValue: { ...storedRecord, status: 'partial_cancelled', stage: 'finished', verdict: { code: 'PARTIAL', labelKo: '사용자 중단 · 부분 결과' } } }
+    }, 'session')), record);
+    assert.equal(await page.$eval('#stopButton', (item) => item.hidden), true);
     if (testCase.panel) {
       await page.evaluate(() => { globalThis.__testHref = 'https://www.instagram.com/explore/'; globalThis.__ticks.forEach((tick) => tick()); });
       assert.equal(await page.$eval('#copyButton', (item) => item.disabled), true);

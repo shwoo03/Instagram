@@ -13,6 +13,7 @@ const FILES = [
   'run-context.js',
   'network-payload-parser.js',
   'debugger-capture.js',
+  'session-retention.js',
   'main.js',
   'devtools.js',
   'devtools.html',

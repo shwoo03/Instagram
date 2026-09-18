@@ -9,7 +9,7 @@
     [
       "stateBadge", "statusIcon", "statusKicker", "statusTitle", "statusDescription",
       "progressRegion", "progressLabel", "progressValue", "progressBar", "startButton",
-      "startButtonLabel", "connectionDot", "connectionLabel", "connectionDescription",
+      "startButtonLabel", "stopButton", "connectionDot", "connectionLabel", "connectionDescription",
       "resultsSection", "integrityBadge", "followersCount", "followingCount", "mutualCount",
       "followingOnlyCount", "followersOnlyCount", "candidateCount", "warningSection",
       "warningList", "accountDetailsSection", "accountSetBadge", "accountDetailHost",
@@ -23,7 +23,8 @@
     validInstagramTab: false,
     currentProfile: "",
     record: null,
-    starting: false
+    starting: false,
+    stopping: false
   };
 
   function isObject(value) {
@@ -58,6 +59,7 @@
     const verdict = isObject(record.verdict) ? record.verdict : {};
     const sources = isObject(record.sources) ? record.sources : {};
     return {
+      runId: typeof record.runId === "string" ? record.runId : "",
       profile: globalThis.IGRunContext?.normalizeProfile(record.profile) || "",
       stage: typeof record.stage === "string" ? record.stage : "",
       status: typeof record.status === "string" ? record.status : "",
@@ -276,6 +278,26 @@
     elements.startButtonLabel.textContent = ["confirmed", "reference", "partial", "retry", "error", "superseded"].includes(state)
       ? "비교 다시 실행"
       : state === "stale-profile" ? "현재 프로필 비교 시작" : state === "running" ? "비교 진행 중" : "비교 시작";
+    elements.stopButton.hidden = state !== "running";
+    elements.stopButton.disabled = ui.stopping || ui.starting || !ui.record?.runId;
+    elements.stopButton.textContent = ui.stopping ? "중단 처리 중…" : "중단하고 현재까지 결과 보기";
+  }
+
+  async function stopCollection() {
+    if (ui.stopping || !ui.record?.runId || deriveState(normalizeRecord(ui.record)) !== "running") return;
+    ui.stopping = true;
+    renderButton("running");
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "IG_STOP_COLLECTION", tabId: ui.tabId, runId: ui.record.runId
+      });
+      if (!response?.ok) throw new Error("stop-rejected");
+      announce("수집 중단을 요청했습니다. 현재까지의 부분 결과를 저장합니다.");
+    } catch {
+      ui.stopping = false;
+      renderButton(deriveState(ui.record ? normalizeRecord(ui.record) : null));
+      announce("중단 요청을 전달하지 못했습니다. 현재 탭의 실행 상태를 확인한 뒤 다시 시도해 주세요.", true);
+    }
   }
 
   function render(rawRecord = ui.record) {
@@ -335,6 +357,7 @@
   async function startCollection() {
     if (!ui.validInstagramTab || ui.tabId === null || ui.starting) return;
     ui.starting = true;
+    ui.stopping = false;
     render();
     announce("비교 실행을 요청했습니다.");
     try {
@@ -385,11 +408,13 @@
     if (areaName !== "session" || !ui.storageKey || !Object.hasOwn(changes, ui.storageKey)) return;
     ui.starting = false;
     ui.record = changes[ui.storageKey].newValue || null;
+    if (!ui.record || ui.record.stage === "finished") ui.stopping = false;
     const normalized = ui.record ? normalizeRecord(ui.record) : null;
     render();
     if (normalized) announce(normalized.verdict.labelKo || "비교 상태가 업데이트되었습니다.");
   });
 
   elements.startButton.addEventListener("click", startCollection);
+  elements.stopButton.addEventListener("click", stopCollection);
   readInitialState();
 })();

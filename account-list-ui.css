@@ -2,6 +2,41 @@
   min-width: 0;
 }
 
+.account-search {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.account-search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.account-search input:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+.account-list-scope,
+.account-search-status {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.account-search-status:empty { display: none; }
+
 .account-detail-host {
   display: grid;
   gap: 8px;

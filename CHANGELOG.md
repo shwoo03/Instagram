@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.8.0
+
+- Added popup/panel collection cancellation with interruptible waits, partial-result preservation, capture detach, and rejection of stale cancellation requests and late responses.
+- Added username search within each saved account list, preserving full counts separately from the 1,000-name display limit and marking unknown totals in older records.
+- Added serialized session writes and oldest-profile result cleanup, with an 8MB target and 10-snapshot target while protecting active profiles and the latest result reference.
+- Added storage-pressure fixtures and browser checks for search, truncation, cancellation, and rate-limit interruption.
+
 ## v1.4.0
 
 - Added collapsed account-name disclosures to the popup and DevTools panel.

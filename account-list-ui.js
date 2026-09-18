@@ -36,6 +36,7 @@
           labelKo: "나만 팔로우",
           usernames: accounts.iFollowButNotReturned,
           evidenceByUsername: toEvidenceMap(accounts.evidence.iFollowButNotReturned),
+          total: accounts.totals.iFollowButNotReturned,
           truncated: accounts.truncated.iFollowButNotReturned,
           candidate: false
         }),
@@ -44,6 +45,7 @@
           labelKo: "나를 팔로우",
           usernames: accounts.followersWithoutMeFollowing,
           evidenceByUsername: toEvidenceMap(accounts.evidence.followersWithoutMeFollowing),
+          total: accounts.totals.followersWithoutMeFollowing,
           truncated: accounts.truncated.followersWithoutMeFollowing,
           candidate: false
         }),
@@ -51,6 +53,8 @@
           key: "candidates",
           labelKo: "비교에서 제외한 후보",
           usernames: Object.freeze([...accounts.followersCandidates, ...accounts.followingCandidates]),
+          total: accounts.totals.followersCandidates === null || accounts.totals.followingCandidates === null
+            ? null : accounts.totals.followersCandidates + accounts.totals.followingCandidates,
           truncated: accounts.truncated.followersCandidates || accounts.truncated.followingCandidates,
           candidate: true,
           groups: Object.freeze([
@@ -59,6 +63,7 @@
               labelKo: "팔로워 후보",
               usernames: accounts.followersCandidates,
               evidenceByUsername: toEvidenceMap(accounts.evidence.followersCandidates),
+              total: accounts.totals.followersCandidates,
               truncated: accounts.truncated.followersCandidates
             }),
             Object.freeze({
@@ -66,6 +71,7 @@
               labelKo: "팔로잉 후보",
               usernames: accounts.followingCandidates,
               evidenceByUsername: toEvidenceMap(accounts.evidence.followingCandidates),
+              total: accounts.totals.followingCandidates,
               truncated: accounts.truncated.followingCandidates
             })
           ])
@@ -135,26 +141,48 @@
     return Object.freeze({ ...badge, level, source, reasonKo });
   }
 
-  function createSummary(documentObject, label, count, interactive = true) {
+  function createSummary(documentObject, label, count, interactive = true, totalCount = count) {
     const summary = documentObject.createElement(interactive ? "summary" : "div");
     summary.className = "account-summary";
     const title = documentObject.createElement("span");
     title.textContent = label;
     const total = documentObject.createElement("strong");
-    total.textContent = `${count.toLocaleString("ko-KR")}명`;
+    total.textContent = totalCount === null ? `저장 ${count.toLocaleString("ko-KR")}명` : `${totalCount.toLocaleString("ko-KR")}명`;
     summary.append(title, total);
     return summary;
   }
 
   function renderPagedList(documentObject, host, usernames, options = {}) {
     let visibleCount = Math.min(PAGE_SIZE, usernames.length);
+    let filtered = usernames;
+    const searchLabel = documentObject.createElement("label");
+    searchLabel.className = "account-search";
+    searchLabel.textContent = "저장된 목록에서 계정 검색";
+    const search = documentObject.createElement("input");
+    search.type = "search";
+    search.placeholder = "사용자명 검색 (@ 생략 가능)";
+    search.maxLength = 31;
+    search.autocomplete = "off";
+    search.spellcheck = false;
+    searchLabel.append(search);
+    const searchStatus = documentObject.createElement("p");
+    searchStatus.className = "account-search-status";
+    searchStatus.setAttribute("role", "status");
+    const scope = documentObject.createElement("p");
+    scope.className = "account-list-scope";
+    scope.textContent = options.total === null
+      ? `전체 수량 미상 · 저장된 ${usernames.length.toLocaleString("ko-KR")}명 안에서 검색합니다.`
+      : `전체 ${(options.total ?? usernames.length).toLocaleString("ko-KR")}명 · 저장된 ${usernames.length.toLocaleString("ko-KR")}명`;
+    host.append(scope, searchLabel, searchStatus);
     const list = documentObject.createElement("ul");
     list.className = `account-name-list${options.candidate ? " is-candidate" : ""}`;
     const controls = documentObject.createElement("div");
     controls.className = "account-list-controls";
 
     function renderPage() {
-      list.replaceChildren(...usernames.slice(0, visibleCount).map((username) => {
+      list.hidden = filtered.length === 0;
+      controls.hidden = visibleCount >= filtered.length;
+      list.replaceChildren(...filtered.slice(0, visibleCount).map((username) => {
         const item = documentObject.createElement("li");
         item.className = "account-evidence-item";
         const row = documentObject.createElement("div");
@@ -194,26 +222,35 @@
         return item;
       }));
 
+      searchStatus.textContent = search.value.trim()
+        ? (filtered.length ? `저장된 목록에서 ${filtered.length.toLocaleString("ko-KR")}명 일치` : "저장된 목록에 일치하는 계정이 없습니다.")
+        : "";
       controls.replaceChildren();
-      if (visibleCount < usernames.length) {
+      if (visibleCount < filtered.length) {
         const button = documentObject.createElement("button");
         button.type = "button";
         button.className = "account-more-button";
-        button.textContent = `20명 더 보기 (${visibleCount.toLocaleString("ko-KR")}/${usernames.length.toLocaleString("ko-KR")})`;
+        button.textContent = `20명 더 보기 (${visibleCount.toLocaleString("ko-KR")}/${filtered.length.toLocaleString("ko-KR")})`;
         button.addEventListener("click", () => {
-          visibleCount = nextVisibleCount(visibleCount, usernames.length);
+          visibleCount = nextVisibleCount(visibleCount, filtered.length);
           renderPage();
         });
         controls.append(button);
       }
     }
 
+    search.addEventListener("input", () => {
+      const query = search.value.trim().replace(/^@/, "").toLowerCase();
+      filtered = usernames.filter((username) => username.includes(query));
+      visibleCount = Math.min(PAGE_SIZE, filtered.length);
+      renderPage();
+    });
     renderPage();
     host.append(list, controls);
     if (options.truncated) {
       const notice = documentObject.createElement("p");
       notice.className = "account-truncated-notice";
-      notice.textContent = "세션 UI 저장 한도에 따라 처음 1,000명만 표시합니다.";
+      notice.textContent = "저장 한도로 일부 계정만 표시합니다. 검색되지 않아도 전체 결과에 없는 계정이라고 판단할 수 없습니다.";
       host.append(notice);
     }
   }
@@ -235,7 +272,7 @@
 
     const details = documentObject.createElement("details");
     details.className = `account-disclosure${section.candidate ? " is-candidate" : ""}`;
-    details.append(createSummary(documentObject, section.labelKo, section.usernames.length));
+    details.append(createSummary(documentObject, section.labelKo, section.usernames.length, true, section.total));
     const body = documentObject.createElement("div");
     body.className = "account-disclosure-body";
 
@@ -248,11 +285,12 @@
         const groupElement = documentObject.createElement("section");
         groupElement.className = "account-candidate-group";
         const heading = documentObject.createElement("h4");
-        heading.textContent = `${group.labelKo} · ${group.usernames.length.toLocaleString("ko-KR")}명`;
+        heading.textContent = `${group.labelKo} · ${group.total === null ? `저장 ${group.usernames.length.toLocaleString("ko-KR")}` : group.total.toLocaleString("ko-KR")}명`;
         groupElement.append(heading);
         if (group.usernames.length > 0) {
           renderPagedList(documentObject, groupElement, group.usernames, {
             candidate: true,
+            total: group.total,
             truncated: group.truncated,
             sectionKey: group.key,
             evidenceByUsername: group.evidenceByUsername
@@ -264,6 +302,7 @@
       }
     } else {
       renderPagedList(documentObject, body, section.usernames, {
+        total: section.total,
         truncated: section.truncated,
         sectionKey: section.key,
         evidenceByUsername: section.evidenceByUsername
