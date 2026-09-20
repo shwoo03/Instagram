@@ -1,0 +1,14 @@
+.result-insights { display: grid; gap: 12px; min-width: 0; }
+.result-insights[hidden] { display: none; }
+.insight-card { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); min-width: 0; overflow-wrap: anywhere; }
+.insight-card h2, .insight-card summary { font-size: 14px; font-weight: 700; margin: 0; }
+.insight-card p { color: var(--text-soft); font-size: 12px; margin: 8px 0; }
+.insight-card p:empty { display: none; }
+.insight-card label { display: block; font-size: 12px; margin-bottom: 6px; }
+.insight-input-row { display: flex; gap: 8px; }
+.insight-input-row input { width: 0; min-width: 0; flex: 1; background: var(--surface-muted); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px; font: inherit; }
+.insight-card button { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--surface-muted); color: var(--text); font: inherit; cursor: pointer; }
+.insight-card button:disabled { opacity: .5; cursor: default; }
+.insight-card summary { cursor: pointer; }
+.insight-card :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#lookupResult { color: var(--text); }

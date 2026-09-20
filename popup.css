@@ -341,6 +341,14 @@ input {
   transition: width 180ms ease;
 }
 
+.progress-track[data-indeterminate="true"] {
+  background: repeating-linear-gradient(110deg, var(--surface-muted) 0 8px, var(--line) 8px 12px);
+}
+
+.progress-meta {
+  flex-wrap: wrap;
+}
+
 .primary-button {
   display: flex;
   width: 100%;

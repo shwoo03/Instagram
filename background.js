@@ -1,4 +1,4 @@
-importScripts("accuracy-engine.js", "account-list-contract.js", "network-payload-parser.js", "debugger-capture.js", "session-retention.js");
+importScripts("accuracy-engine.js", "account-list-contract.js", "run-diagnostics.js", "result-insights.js", "network-payload-parser.js", "debugger-capture.js", "session-retention.js");
 
 const SNAPSHOT_BUDGET_BYTES = 4 * 1024 * 1024;
 const RUN_PROGRESS_PREFIX = "ig_run_progress:tab:";
@@ -50,7 +50,9 @@ function getSafeNonNegativeInteger(value) {
 
 function sanitizeProgressList(value) {
   return {
-    expected: getSafeNonNegativeInteger(value?.expected),
+    expected: value?.expected === null || value?.expected === undefined || value?.expected === "" ||
+      !Number.isFinite(Number(value.expected)) || Number(value.expected) < 0
+      ? null : getSafeNonNegativeInteger(value.expected),
     confirmed: getSafeNonNegativeInteger(value?.confirmed),
     assisted: getSafeNonNegativeInteger(value?.assisted),
     candidates: getSafeNonNegativeInteger(value?.candidates)
@@ -84,6 +86,8 @@ function sanitizeRunProgress(value, tabId) {
       followingOnly: getSafeNonNegativeInteger(value.counts?.followingOnly)
     },
     accounts: globalThis.IGAccountListContract.sanitizeAccounts(value.accounts),
+    completion: globalThis.IGResultInsights.sanitizeCompletion(value.completion),
+    diagnostics: globalThis.IGRunDiagnostics.sanitize(value.diagnostics),
     sources: {
       devtoolsReady: Boolean(value.sources?.devtoolsReady),
       debuggerReady: Boolean(value.sources?.debuggerReady),
@@ -513,7 +517,8 @@ function sanitizeCaptureHealth(value) {
   if (!value || typeof value !== "object") return null;
   return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
     pendingCount: getSafeNonNegativeInteger(value[mode]?.pendingCount),
-    failedCount: getSafeNonNegativeInteger(value[mode]?.failedCount)
+    failedCount: getSafeNonNegativeInteger(value[mode]?.failedCount),
+    failureReasons: globalThis.IGRunDiagnostics.sanitizeFailures(value[mode]?.failureReasons)
   }]));
 }
 
@@ -631,7 +636,7 @@ async function injectInstagramCollector(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["accuracy-engine.js", "account-list-contract.js", "main.js"]
+    files: ["accuracy-engine.js", "account-list-contract.js", "run-diagnostics.js", "result-insights.js", "main.js"]
   });
 }
 
@@ -645,6 +650,7 @@ function buildRelayPayload(message) {
       stats: message.stats || null,
       captureHealth: sanitizeCaptureHealth(message.captureHealth),
       failedMode: ["followers", "following"].includes(message.failedMode) ? message.failedMode : "",
+      failureReason: globalThis.IGRunDiagnostics.failureCode(message.failureReason || message.reason),
       error: message.error || "",
       capturedAt: message.capturedAt || new Date().toISOString()
     };
@@ -823,6 +829,30 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status || changeInfo.url) reconcileTabNavigation(tabId).catch(() => {});
 });
 
+async function lookupAccountFromUi(message, sender) {
+  const contract = globalThis.IGResultInsights;
+  const tabId = getValidTabId(message.tabId);
+  const username = contract.username(message.username);
+  const profile = contract.username(message.profile);
+  const uiUrls = ["popup.html", "devtools-panel.html"].map((file) => chrome.runtime.getURL(file));
+  if (tabId === null || !Number.isInteger(message.tabId) || !uiUrls.includes(sender?.url) || sender?.tab ||
+      !username || !profile || profile === "unknown_profile" ||
+      typeof message.runId !== "string" || !message.runId || message.runId.length > 100) {
+    return { ok: false, error: "invalid-lookup-request" };
+  }
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "IG_QUERY_ACCOUNT", source: "extension-background", runId: message.runId, profile, username
+    });
+    if (!response?.ok || response.runId !== message.runId || response.profile !== profile || response.username !== username) {
+      return { ok: false, error: "lookup-context-mismatch" };
+    }
+    return { ok: true, runId: message.runId, profile, username, ...contract.lookupResult(response) };
+  } catch {
+    return { ok: false, error: "collector-unavailable" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
     return false;
@@ -830,6 +860,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "IG_START_COLLECTION") {
     startCollectionFromUi(message, sendResponse);
+    return true;
+  }
+
+  if (message.type === "IG_LOOKUP_ACCOUNT") {
+    lookupAccountFromUi(message, sender).then(sendResponse);
     return true;
   }
 

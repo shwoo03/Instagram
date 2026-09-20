@@ -87,6 +87,19 @@ try {
   assert.equal(progress.accounts.followersWithoutMeFollowing.length, EXPECTED.followersOnly);
   assert.equal(await w.evaluate((id) => debuggerController.hasSession(id), tabId), false);
   console.log('PASS actual popup -> debugger Network -> parser -> compare -> storage -> detach (36/30, mutual 24)');
+  assert.equal(progress.completion.followers.state, 'CONFIRMED_EXACT_COUNT');
+  assert(progress.completion.followers.evidence.debuggerExactPayloadCount > 0);
+  for (const [username, category] of [['e2e_user_001', 'followers_only'], ['e2e_user_013', 'mutual'], ['e2e_user_037', 'following_only'], ['e2e_user_999', 'not_observed']]) {
+    const answer = await popup.evaluate((request) => chrome.runtime.sendMessage(request), {
+      type: 'IG_LOOKUP_ACCOUNT', tabId, runId: progress.runId, profile: 'fixtureprofile', username
+    });
+    assert.equal(answer.category, category, JSON.stringify(answer));
+    assert.equal(answer.complete, true);
+  }
+  await popup.$eval('#lookupUsername', (input) => { input.value = '@E2E_USER_013'; });
+  await popup.$eval('#lookupForm', (form) => form.requestSubmit());
+  await popup.waitForFunction(() => document.querySelector('#lookupResult').textContent.includes('맞팔'));
+  console.log('PASS actual popup -> full-memory account lookup, four categories and completion evidence');
   await popup.$eval('#startButton', (button) => button.click());
   const running = await until(() => w.evaluate(async (id) => {
     const value = (await chrome.storage.session.get(`ig_run_progress:tab:${id}`))[`ig_run_progress:tab:${id}`];
@@ -96,6 +109,10 @@ try {
     type: 'IG_STOP_COLLECTION', tabId, runId
   }), { tabId, runId: progress.runId });
   assert.equal(staleStop.ok, false, 'previous run must not cancel current run');
+  const staleLookup = await popup.evaluate((request) => chrome.runtime.sendMessage(request), {
+    type: 'IG_LOOKUP_ACCOUNT', tabId, runId: progress.runId, profile: 'fixtureprofile', username: 'e2e_user_013'
+  });
+  assert.equal(staleLookup.ok, false, 'old run lookup must not inspect the new run');
   await popup.waitForFunction(() => !document.querySelector('#stopButton').hidden && !document.querySelector('#stopButton').disabled);
   const stoppedAt = Date.now();
   await popup.$eval('#stopButton', (button) => button.click());
@@ -107,6 +124,10 @@ try {
   assert.equal(stopped.runId, running.runId);
   assert.equal(stopped.verdict.code, 'PARTIAL');
   assert.equal(stopped.accounts.relationshipSet, 'partial');
+  const partialLookup = await popup.evaluate((request) => chrome.runtime.sendMessage(request), {
+    type: 'IG_LOOKUP_ACCOUNT', tabId, runId: stopped.runId, profile: 'fixtureprofile', username: 'e2e_user_013'
+  });
+  assert.equal(partialLookup.category, 'insufficient');
   assert(stopped.counts.followers.confirmed >= running.counts.followers.confirmed, 'retain captured users');
   assert.equal(await w.evaluate((id) => debuggerController.hasSession(id), tabId), false);
   await until(() => w.evaluate(async (runId) => {

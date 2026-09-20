@@ -27,6 +27,9 @@ for (const item of evidence) onMessage.emit({ type: 'IG_DEVTOOLS_ACK', seq: item
 assert.equal(messages.at(-1).captureHealth.followers.pendingCount, 0);
 request('2026-09-05T00:00:02Z')('invalid JSON');
 assert(messages.some((item) => item.failedMode === 'followers' && item.reason === 'response-parse-failed'));
+assert(messages.some((item) => item.failedMode === 'followers' && item.failureReason === 'not-list-json'));
+request('2026-09-05T00:00:02Z')('{"users": broken');
+assert(messages.some((item) => item.failedMode === 'followers' && item.failureReason === 'invalid-json'));
 const late = request('2026-09-05T00:00:03Z');
 onNavigated.emit('https://www.instagram.com/other/');
 late(JSON.stringify({ users: [{ username: 'stale' }], has_more: false }));

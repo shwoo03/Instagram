@@ -1,5 +1,22 @@
 # Backlog
 
+## 2026-09-21 Account lookup and result explanations
+
+- Implemented selected next items 1–3: full-memory username lookup in popup/panel, per-list completion evidence, and privacy-filtered diagnostic copy in both views.
+- Lookup is bound to the tab/run/profile; it does not request fresh Instagram data or persist search history. Only a finished, canonically confirmed comparison can classify a relationship. Partial/cancelled/assisted runs show insufficient evidence; unavailable collector memory requires a new comparison.
+- Completion explanations reuse `accuracy-engine.js` output, not connection readiness or a new count-based rule. Old records explicitly lack detailed evidence.
+- Diagnostic copy uses an explicit numeric/fixed-code field list; account names, profile, run ID, URLs and free-form warnings/events are excluded.
+- Verification and independent-review limits: newest `HANDOFF.md` entry. Not selected: storage management UI, side panel, partial recollection, downloads/import, persistent history, broad refactoring or CI.
+
+## 2026-09-21 Progress and failure diagnostics
+
+- Implemented: keep unknown expected counts as `null` from collector through session storage; preserve real zero, remove the arbitrary 18% progress value, and correct accessible count wording.
+- Implemented: show the existing 429 pause deadline in popup/panel, refresh the countdown without rebuilding account lists, retain stop controls, and suppress resumption text for terminal/previous-profile results.
+- Implemented: bounded per-list failure categories and counts across Debugger/DevTools, relay, progress storage, Korean warnings and diagnostic copy. Body-read and delivery failures are distinguished; no raw response or new permissions.
+- Verification: local checks and synthetic browser results are recorded in the latest `HANDOFF.md` entry. Independent review is required because shared messages/stored progress gained additive diagnostics.
+- Still deferred: research item 4 (physical extension-action permission coverage / Puppeteer change), partial recollection, downloads/import, side panel, persistent history, broad extraction and CI.
+
+
 ## 2026-09-18 Selected usability improvements — v1.8.0
 
 - Done: stop collection from popup/panel, interrupt rate-limit waits, retain a partial result, detach capture, reject stale stop requests and late username messages.

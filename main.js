@@ -299,13 +299,13 @@
             updatedAt: new Date().toISOString(),
             counts: {
                 followers: {
-                    expected: state.expectedCounts.followers || 0,
+                    expected: state.expectedCounts.followers ?? null,
                     confirmed: getStrictUsers("followers").length,
                     assisted: getAssistedUsers("followers").length,
                     candidates: getUnconfirmedCandidates("followers").length
                 },
                 following: {
-                    expected: state.expectedCounts.following || 0,
+                    expected: state.expectedCounts.following ?? null,
                     confirmed: getStrictUsers("following").length,
                     assisted: getAssistedUsers("following").length,
                     candidates: getUnconfirmedCandidates("following").length
@@ -315,6 +315,11 @@
                 followingOnly: visibleDiffs.iFollowButNotReturned?.length || 0
             },
             accounts,
+            completion: globalThis.IGResultInsights?.sanitizeCompletion({
+                followers: getListCompletionAssessment("followers", state.expectedCounts.followers),
+                following: getListCompletionAssessment("following", state.expectedCounts.following)
+            }),
+            diagnostics: globalThis.IGRunDiagnostics?.fromCaptureHealth(state.rateLimit, state.captureHealth),
             sources: {
                 devtoolsReady: isDevtoolsBridgeFresh(),
                 debuggerReady: isDebuggerBridgeReady(),
@@ -383,6 +388,7 @@
     }
 
     function registerRateLimitSignal(origin) {
+        if (cancellationRequested || window.__igFollowerRunInProgress !== true) return;
         const now = Date.now();
         if (state.rateLimit.lastDetectedAtMs && now - state.rateLimit.lastDetectedAtMs < RATE_LIMIT_DEDUP_WINDOW_MS) {
             return;
@@ -397,6 +403,7 @@
         );
         state.rateLimit.pausedUntilMs = Math.max(state.rateLimit.pausedUntilMs, now + pauseMs);
         recordRunEvent("rate_limit_detected", { origin, count: state.rateLimit.count, pauseMs });
+        emitRunProgress(`collecting_${state.activeCollectionMode}`, "running", { status: "running" }, { force: true });
         console.log(`🚦 Instagram 요청 제한(429) 신호 감지 (출처: ${origin}, ${state.rateLimit.count}회째). 스크롤을 약 ${Math.round(pauseMs / 1000)}초 일시정지합니다.`);
     }
 
@@ -1659,6 +1666,27 @@
         return false;
     }
 
+    function lookupAccount(message) {
+        const contract = globalThis.IGResultInsights;
+        const username = contract?.username(message.username);
+        if (!username || message.runId !== state.runId || window.__igFollowerActiveRunId !== state.runId ||
+            !state.runProfile || state.runProfile === "unknown_profile" ||
+            message.profile !== state.runProfile || getProfileKey() !== state.runProfile) {
+            return { ok: false, error: "lookup-context-mismatch" };
+        }
+        const finalResult = window.__igFollowerResult;
+        const complete = !cancellationRequested && window.__igFollowerRunInProgress === false &&
+            finalResult?.runId === state.runId && finalResult.profile === state.runProfile &&
+            finalResult.trustVerdict?.code === "CONFIRMED" &&
+            buildCanonicalTrustSnapshot(finalResult.diffs).verdict.code === "CONFIRMED";
+        const evidence = Object.fromEntries(["followers", "following"].map((mode) => [mode, {
+            exact: getStrictUsers(mode).includes(username),
+            observed: getAssistedUsers(mode).includes(username) || getUnconfirmedCandidates(mode).includes(username)
+        }]));
+        return { ok: true, runId: state.runId, profile: state.runProfile, username,
+            ...contract.lookupResult({ complete, evidence }) };
+    }
+
     function installExtensionMessageBridge() {
         if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
             state.devtoolsBridge.lastError = "chrome.runtime.onMessage unavailable";
@@ -1675,6 +1703,10 @@
         }
 
         const handler = (message, sender, sendResponse) => {
+            if (message?.type === "IG_QUERY_ACCOUNT" && message.source === "extension-background") {
+                sendResponse(lookupAccount(message));
+                return false;
+            }
             if (message?.type === "IG_CANCEL_COLLECTION" && message.source === "extension-background") {
                 if (message.runId !== state.runId || window.__igFollowerActiveRunId !== state.runId ||
                     window.__igFollowerRunInProgress !== true) {
@@ -1734,9 +1766,15 @@
                 if (window.__igFollowerRunInProgress === true && message.captureHealth) {
                     for (const mode of ["followers", "following"]) {
                         const previous = state.captureHealth.devtools[mode] || {};
+                        const failureReasons = { ...previous.failureReasons };
+                        if (message.failedMode === mode) {
+                            const code = globalThis.IGRunDiagnostics?.failureCode(message.failureReason || message.reason) || "capture_failed";
+                            failureReasons[code] = (failureReasons[code] || 0) + 1;
+                        }
                         state.captureHealth.devtools[mode] = {
                             pendingCount: Number(message.captureHealth[mode]?.pendingCount) || 0,
-                            failedCount: (previous.failedCount || 0) + (message.failedMode === mode ? 1 : 0)
+                            failedCount: (previous.failedCount || 0) + (message.failedMode === mode ? 1 : 0),
+                            failureReasons
                         };
                     }
                 }

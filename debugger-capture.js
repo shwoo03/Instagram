@@ -79,12 +79,18 @@
     function getListHealth(session) {
       return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
         pendingCount: [...session.pending.values(), ...session.processing.values()].filter((item) => item.mode === mode).length,
-        failedCount: session.failures[mode]
+        failedCount: session.failures[mode],
+        failureReasons: { ...session.failureReasons[mode] }
       }]));
     }
 
     function failedRequest(session, metadata, reason) {
-      if (metadata?.mode in session.failures) session.failures[metadata.mode]++;
+      if (metadata?.mode in session.failures) {
+        session.failures[metadata.mode]++;
+        const code = globalObject.IGRunDiagnostics.failureCode(reason);
+        const reasons = session.failureReasons[metadata.mode];
+        reasons[code] = Math.min(1_000_000, (reasons[code] || 0) + 1);
+      }
       session.failureCount++;
       session.lastReason = reason;
       emitStatus(session, "degraded", reason);
@@ -164,6 +170,7 @@
         pending: new Map(),
         processing: new Map(),
         failures: { followers: 0, following: 0 },
+        failureReasons: { followers: {}, following: {} },
         seen: new Set(),
         sequence: 0
       };
@@ -207,6 +214,7 @@
         session.processing.clear();
         session.seen.clear();
         session.failures = { followers: 0, following: 0 };
+        session.failureReasons = { followers: {}, following: {} };
       }
       session.runId = runId;
       session.profile = profile;
@@ -250,6 +258,7 @@
     }
 
     async function processFinishedBody(session, requestId, metadata) {
+      let failureReason = "response-body-unavailable";
       try {
         const result = await chromeApi.debugger.sendCommand(
           { tabId: session.tabId },
@@ -277,6 +286,7 @@
         session.lastActivityAt = new Date(now()).toISOString();
         if (parsed.evidence.confidence === "exact") session.payloadCount++;
         else session.candidatePayloadCount++;
+        failureReason = "delivery-failed";
         await onEvidence(Object.freeze({
           ...parsed.evidence,
           type: "usernames",
@@ -289,7 +299,7 @@
         }));
       } catch (error) {
         if (sessions.get(session.tabId) !== session || !session.attached || metadata.runId !== session.runId) return;
-        failedRequest(session, metadata, "response-body-or-delivery-unavailable");
+        failedRequest(session, metadata, failureReason);
       } finally {
         if (session.processing.get(requestId) === metadata) session.processing.delete(requestId);
         if (sessions.get(session.tabId) === session && session.attached && metadata.runId === session.runId) {

@@ -34,6 +34,11 @@
   let currentProfile = "";
   let stopping = false;
 
+  const insightsHost = document.createElement("div");
+  insightsHost.className = "result-insights";
+  elements.accountDetailsSection.before(insightsHost);
+  const insights = globalThis.IGResultInsightsUI.mount(insightsHost, { copyButton: elements.copyButton });
+
   function isObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
@@ -87,10 +92,13 @@
     const verdict = isObject(record.verdict) ? record.verdict : {};
     return {
       schemaVersion: safeNumber(record.schemaVersion) || 1,
+      runId: typeof record.runId === "string" ? record.runId : "",
       profile: globalThis.IGRunContext?.normalizeProfile(record.profile) || "",
       stage: typeof record.stage === "string" ? record.stage : "",
       status: typeof record.status === "string" ? record.status : "",
       updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+      diagnostics: globalThis.IGRunDiagnostics.sanitize(record.diagnostics),
+      completion: globalThis.IGResultInsights.sanitizeCompletion(record.completion),
       counts: {
         followers: normalizeList(counts.followers),
         following: normalizeList(counts.following),
@@ -168,6 +176,8 @@
       retry: ["재실행 필요", "warning", "증거 부족", record?.verdict.labelKo || "DevTools 재실행 필요", record?.verdict.recommendedActionKo || "프로필을 새로고침하고 목록을 다시 열어 주세요."],
       error: ["오류", "danger", "실행 실패", record?.verdict.labelKo || "진단을 완료하지 못했습니다", record?.verdict.recommendedActionKo || "확장 프로그램과 대상 탭을 새로고침한 뒤 다시 시도해 주세요."]
     };
+    const cooldown = globalThis.IGRunDiagnostics.cooldownText(record?.diagnostics, state === "running");
+    if (cooldown) views.running = ["대기 중", "info", "Instagram 요청 제한", "잠시 쉬었다가 수집합니다", cooldown];
     const [badge, tone, kicker, title, description] = views[state];
     elements.stateBadge.textContent = badge;
     elements.stateBadge.dataset.tone = tone;
@@ -232,7 +242,7 @@
   function renderWarnings(record, state) {
     const warnings = state === "stale-profile"
       ? [`현재 @${currentProfile || "알 수 없음"}에서 비교를 다시 실행해 주세요.`]
-      : [...(record?.warnings || [])];
+      : [...globalThis.IGRunDiagnostics.messages(record?.diagnostics), ...(record?.warnings || [])];
     if (record?.verdict.recommendedActionKo && ["partial", "retry", "error"].includes(state)) {
       warnings.unshift(record.verdict.recommendedActionKo);
     }
@@ -322,6 +332,7 @@
     renderWarnings(visibleRecord, state);
     renderTimeline(visibleRecord);
     elements.copyButton.disabled = !visibleRecord;
+    insights.render(visibleRecord, { tabId: inspectedTabId, profile: currentProfile });
     elements.stopButton.hidden = state !== "running";
     elements.stopButton.disabled = stopping || !rawRecord?.runId;
     elements.stopButton.textContent = stopping ? "중단 처리 중…" : "수집 중단";
@@ -341,39 +352,6 @@
       stopping = false;
       render();
       announce("중단 요청을 전달하지 못했습니다. 현재 실행 상태를 확인해 주세요.", true);
-    }
-  }
-
-  function privacySafeDiagnostic(record) {
-    return {
-      schemaVersion: record.schemaVersion,
-      stage: record.stage,
-      status: record.status,
-      updatedAt: record.updatedAt,
-      counts: record.counts,
-      sources: record.sources,
-      pagination: record.pagination,
-      verdict: {
-        code: record.verdict.code,
-        severity: record.verdict.severity,
-        reasons: record.verdict.reasons
-      },
-      warnings: record.warnings,
-      timeline: record.timeline.map(({ code, at }) => ({ code, at }))
-    };
-  }
-
-  async function copyDiagnostic() {
-    if (!rawRecord) return;
-    const payload = JSON.stringify(privacySafeDiagnostic(normalizeRecord(rawRecord)), null, 2);
-    try {
-      await navigator.clipboard.writeText(payload);
-      const original = elements.copyButton.textContent;
-      elements.copyButton.textContent = "복사됨";
-      announce("개인정보를 제외한 진단을 복사했습니다.");
-      window.setTimeout(() => { elements.copyButton.textContent = original; }, 1400);
-    } catch {
-      announce("클립보드에 진단을 복사하지 못했습니다.", true);
     }
   }
 
@@ -422,7 +400,6 @@
     }
   });
 
-  elements.copyButton.addEventListener("click", copyDiagnostic);
   elements.stopButton.addEventListener("click", stopCollection);
   chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
     if (tabId === inspectedTabId && (changeInfo.url || changeInfo.status === "complete")) inspectTarget();
@@ -431,8 +408,9 @@
   const contextTimer = window.setInterval(() => {
     if (document.hidden) return;
     inspectTarget();
-    if (rawRecord) elements.updatedAt.textContent = globalThis.IGRunContext?.formatRelativeTime(rawRecord.updatedAt) || "—";
-  }, 1500);
+    const record = rawRecord ? normalizeRecord(rawRecord) : null;
+    renderVerdict(deriveState(record), record);
+  }, 1000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) inspectTarget(); });
   window.addEventListener("pagehide", () => window.clearInterval(contextTimer), { once: true });
   chrome.devtools?.network?.onNavigated?.addListener(() => inspectTarget());

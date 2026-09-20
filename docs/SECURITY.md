@@ -82,6 +82,31 @@ automation for this extension by default. If one becomes necessary, document:
 
 ## Storage Policy
 
+The 2026-09-21 lookup sends one normalized username through extension-UI-only
+messages bound to the displayed tab/run/profile. It queries existing collector
+memory without making network requests or storing search history. Responses
+contain only the same binding and per-list exact/observed booleans plus a fixed
+relationship category. Stale or unavailable memory cannot fall back to treating
+absence in truncated storage as proof. Relationship classification additionally
+requires a finished, non-cancelled, canonically confirmed run.
+
+Additive progress `completion` contains two bounded list summaries: fixed
+completion/reason codes, expected/confirmed counts, exact payload counts and
+pending/failed counts. `result-insights.js` sanitizes them at collection, relay
+and UI boundaries. Popup/panel diagnostic copy explicitly selects counts,
+completion, existing bounded diagnostics and a verdict code; it excludes all
+usernames, profile/run identifiers, URLs, free-form warnings/events and raw
+payloads. Copy scope is described in the UI before copying. No permission,
+persistent storage, full-list transfer or account action is added.
+
+The 2026-09-21 progress diagnostics add only an existing 429 pause's numeric
+deadline/count and per-list pending/failure counts. Failure keys are restricted
+to eight fixed categories in `run-diagnostics.js`; the background and both UIs
+sanitize again. Diagnostic copy includes those derived fields, without raw
+bodies, URLs, headers, arbitrary exception strings or usernames in the new
+diagnostics object. Existing account-list storage remains separately governed
+below. This adds no permissions, requests or persistent storage.
+
 Allowed runtime storage should be limited to derived result snapshots and
 diagnostics. Do not persist raw DevTools response bodies, cookies, request
 headers, auth state, private messages, or unrelated profile data.

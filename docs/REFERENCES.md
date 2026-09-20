@@ -1,5 +1,24 @@
 # References
 
+## Account lookup and result explanations — 2026-09-21
+
+- Owner selection: “ㄱㄱ” after the recommendation to implement next items 1–3 (unified lookup, completion evidence cards, popup diagnostic copy). This is separate from the preceding progress/429 diagnostics bundle.
+- Reuse decision: existing `chrome.runtime.sendMessage` / `chrome.tabs.sendMessage` and UI-only, run-bound stop-message pattern in `background.js`; no new API, permission, dependency, Instagram endpoint or network request. `main.js` queries its full strict/assisted/candidate collections, never the 1,000-name stored UI subsets. The shared `result-insights.js` contract and `result-insights-ui.js` presenter avoid divergent popup/panel rules.
+- Accuracy decision: require the same run/profile, finished collector, non-cancelled state, final `CONFIRMED` verdict and a still-confirmed canonical assessment before relationship classification. Exact membership flags remain visible during partial runs, but absence cannot establish a one-sided relationship. No presence in either strict list means only “not observed”, not an account-existence claim. Reloaded/unavailable memory has no truncated-list fallback.
+- Explanation decision: reuse `getListCompletionAssessment` / `accuracy-engine.js`; store only two small sanitized summaries (fixed state/reason codes, exact payload counts, count evidence and pending/failed counts). Existing records missing summaries show an explicit unavailable explanation; no data migration.
+- Privacy decision: copy only selected counts, completion summaries, bounded diagnostics and a verdict code. Drop arbitrary warnings, event strings, profile, usernames, run ID and URLs, including older stored values. Explain included fields before copy. Search text and its one-account response remain transient UI/message data.
+- Recheck when canonical completion states/reason codes, list storage limits or capture interfaces change. Local fixture evidence is not current Instagram compatibility proof. See `HANDOFF.md` for checks and the cumulative fixed review snapshot. Roll back only the selected hunks/new modules after checking drift; do not revert preceding progress diagnostics or existing kit documentation.
+
+## Progress and failure diagnostics — 2026-09-21
+
+- Owner selection: the owner replied “좋은뎅 ㄱㄱ” to the recommendation to implement research items 1–3. Item 4 (extension-action permission coverage and possible Puppeteer upgrade) remains deferred.
+- [W3C ARIA progressbar](https://w3c.github.io/aria/#progressbar) and [aria-valuenow](https://w3c.github.io/aria/#aria-valuenow), read during the 2026-09-21 research (ARIA 1.3 editor draft): adopted indeterminate progress when the total is unknown; omit `aria-valuenow`, retain a Korean textual count, and distinguish `null` from a real zero end to end.
+- Existing 60/120/240-second 429 waits remain the runtime policy. The UI uses the existing absolute pause deadline; it does not create requests, extend a pause when reopened, or enable recollection. Late 429 signals cannot replace cancelled/finished progress.
+- `run-diagnostics.js` is a small shared sanitizer/presenter using existing JavaScript/Chrome session messaging. It accepts only two list modes, eight fixed failure categories, bounded counts and a numeric deadline; arbitrary keys/text are discarded. No external library or new permission is needed for these finite fields. Existing `schemaVersion: 1` records without diagnostics normalize to empty diagnostics; no migration or retained history is introduced.
+- Failure codes and counts are additive to the existing completion guards. Exact/assisted membership and capture failure eligibility remain unchanged. A parse failure is not proof that Instagram changed its format.
+- Verification and fixed review scope: latest `docs/HANDOFF.md` entry. Rollback only this task's runtime/test files and newly added documentation sections after checking for drift; preserve all pre-existing uncommitted kit edits. No dependency/manifest changes or commit.
+
+
 Use this file for official docs, adoption decisions, and source provenance that
 affect this Chrome extension.
 

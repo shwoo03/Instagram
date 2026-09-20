@@ -76,7 +76,7 @@
         const delivered = pending.get(message.seq);
         pending.delete(message.seq);
         if (delivered?.type === "IG_DEVTOOLS_USERNAMES") {
-          sendStatus("capture-progress", message.ok ? "" : delivered.mode);
+          sendStatus("capture-progress", message.ok ? "" : delivered.mode, "delivery-failed");
         }
       });
 
@@ -133,12 +133,13 @@
     postToBackground("IG_DEVTOOLS_READY", { reason });
   }
 
-  function sendStatus(reason = "heartbeat", failedMode = "") {
+  function sendStatus(reason = "heartbeat", failedMode = "", failureReason = reason) {
     stats.statusSent++;
     postToBackground("IG_DEVTOOLS_STATUS", {
       reason,
       captureHealth: captureHealth(),
       failedMode,
+      failureReason: failedMode ? failureReason : "",
       error: stats.lastError || ""
     });
   }
@@ -160,7 +161,7 @@
         console.log("[IG DevTools] response ignored:", getSafeUrlLabel(url), result.reason);
         sendStatus(result.reason);
       }
-      sendStatus("response-parse-failed", parser.detectMode(url));
+      sendStatus("response-parse-failed", parser.detectMode(url), result?.reason || "response-parse-failed");
       return;
     }
 

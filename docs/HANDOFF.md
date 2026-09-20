@@ -1,5 +1,127 @@
 # Handoff
 
+## Account lookup and result explanations — 2026-09-21
+
+The owner's next “ㄱㄱ” selected unified account lookup, completion evidence
+cards and popup diagnostic copy. All three are implemented in popup/panel.
+Lookup uses the collector's full in-memory sets, not the saved 1,000-name
+subsets. It requires matching tab/run/profile and only classifies relationships
+after a finished, non-cancelled, canonically confirmed comparison. Partial or
+assisted data shows `확인 부족`; missing collector memory asks for a new run.
+This queries an existing snapshot, not Instagram's current server state.
+
+The cards expose each list's existing `accuracy-engine.js` completion state,
+exact DevTools/Debugger payload counts, pending/failed counts and fixed Korean
+reasons. Readiness alone never becomes exact evidence. Older records explicitly
+lack detailed evidence. Copy in both views includes only selected counts,
+completion/diagnostic fields and a fixed verdict code; arbitrary warnings and
+event text, usernames, profile/run IDs and URLs are excluded. No search history,
+network request, full-list transfer, permission or dependency is added.
+
+- `npm test`: passed, including actual collector lookup/relay functions with synthetic data beyond the 1,000-name cap, run/profile binding, cancellation/running/reference-only gates, unavailable memory, canonical completion forwarding and privacy filtering.
+- `npm run e2e`: passed all six existing local collection scenarios with exit code 0.
+- `npm run e2e:capture`: passed with exit code 0. Actual Chrome popup -> automatic capture -> stored completion -> full-memory lookup covers mutual, each one-sided category and not-observed; old-run queries fail and cancelled-run queries remain insufficient. Existing stop/late response/worker restart/detach/navigation checks also pass. This is localhost data, not live Instagram.
+- `npm run ui:e2e`: passed at popup 320/360/420px and panel 320/736/1024px. Covers missing old-record evidence, fixed reason cards, popup/panel copy, unavailable lookup, partial lookup, input/profile changes during a delayed response, existing account search, cooldown and stop. Final expanded-card screenshots at 320px popup and 736px panel were visually inspected; no horizontal overflow.
+- `git diff --check`: passed. Canonical accuracy rules, manifest and dependency lockfile unchanged; existing dirty kit work and preceding diagnostics implementation preserved. No live account activity, commit, push or release.
+- Independent review: **blocked/unreviewed**. Shared messages/stored summaries trigger `docs/CHANGE_REVIEW.md`; current tools cannot enforce its read-only/allowlisted reviewer boundary. No reviewer was started and these author checks are not independent review. Next: human review of the fixed cumulative snapshot below, or a supported restricted environment with successful harmless probes. No review findings/corrections exist for this snapshot.
+- To use: reload the unpacked extension and Instagram tab, run a new comparison, then use `통합 계정 조회` / expand `판정 근거`. Reopen DevTools if using its capture. Actual Instagram normal completion/manual stop remain unverified.
+- Still deferred: storage management UI, side panel, partial recollection, downloads/import, persistent history, broad extraction, CI and physical toolbar permission coverage.
+
+### Fixed cumulative runtime/test review snapshot
+
+Base: `main`, `c022f649f6a9a05a3b001d61fb5cf5d7b5d6d0e0`.
+This cumulative scope includes the preceding progress-diagnostics bundle, whose
+runtime files were clean/absent at its start. Its previous hashes below are now
+historical where files overlap. Include all 21 files and new-file contents when
+reviewing against the base; do not include unrelated dirty kit docs/instructions.
+
+```text
+d267aa91ba8072363889747076ba13bcda0957583b5e5f03b109c5453da35f89  background.js
+fba161ed5d4bcc89b5d6557b291b08c3fe9fcb5afa65444ebc0542e76fd43240  debugger-capture.js
+a5bbcb2d675ff63c9002a2e3ec4ab981abdb81a071e0b3e35fd0a60ab384471a  devtools-panel.html
+12105932c260ee1b80c83bc3f72120ca7407ff64e2a7f3fc5f431405c6ec5918  devtools-panel.js
+2ec0e05d4c0d223597ae78d53c79784f174b46cb098709944492ff63c2b8c95f  devtools.js
+74b5a8b88f1060b4be4892a42138c669a4e450018154f7c01399ae9f407f8d75  main.js
+f0e6f0426a58f71b5ae1cc1d646c0891ff4d4dba192abfb56c7b75071f080ec2  package.json
+c5f02f87c0dd5e28f3bb4a14448abb80c6936d3f5a7c748af9c23f3d1b8b5176  popup.css
+dc6d45f95e1250a8426a92a0b3f277112c6570a5603709b5994d29b44bb9c96a  popup.html
+e4a4c065fcd19b06c74ebb7f305cdd1a81a2d3e7475fae26c17ed1a9e7737afc  popup.js
+becf6a9ce64a3e8d9e7b87943f5bc417c8f5024ceb560dccd551c049cdeb0087  run-diagnostics.js
+47f7da9e8a24cb87347afd1816dedb3045fec7693b09cededa8f4ba768752a16  result-insights.js
+0ab39eb29ff87b5ee56dbb281a3def3c69ba60221afe6e8a746c5b3bfd30e564  result-insights-ui.js
+d7955b6f5c0f99cabf0dbd528f5e9b035620f13921ab42c5dfadfef8a6d8b96b  result-insights.css
+beebb7f712f1707656fc0e4b63954e0cfbb510ca3b86538477e250da45c67b39  tools/account-list-render-fixtures.mjs
+839093931c924d9c043a7788287cc58674e3605bd2458f98f694a292ee4fe9a3  tools/debugger-capture-fixtures.mjs
+056bb5489f11a573749da518fb23e76e4a099e900e544a9976a3bad2e0694064  tools/devtools-capture-fixtures.mjs
+3aa02d210fa3154f1250badc43310e267497682580d82eb7b09bc29e55843cb0  tools/e2e/build-test-extension.mjs
+ce44dee75efbf4f24dc4af8d528daf532a8504d3b88aaf1339de418de0de3fb7  tools/e2e/real-capture.mjs
+dbf2bb25c3036cccc1d335671724debc80a5267050cd1675a2fcd792905a1236  tools/run-diagnostics-fixtures.mjs
+685a97f8ae92f36d57505e4cc485698f0d61a41a04928e6c97fd0097d0a11f96  tools/result-insights-fixtures.mjs
+```
+
+Supporting changes are this entry, the matching new sections in `BACKLOG.md`
+and `REFERENCES.md`, and the two lookup/completion paragraphs at the top of
+`SECURITY.md` Storage Policy. For this follow-up alone, roll back only its
+lookup/completion/copy hunks, four new insight module/style/test files and these
+doc additions after checking drift; retain preceding progress diagnostics and
+all pre-existing kit changes. Never reset the whole dirty worktree.
+
+## Progress and diagnostics implementation — 2026-09-21
+
+Research items 1–3 are implemented after the owner's “좋은뎅 ㄱㄱ”. Unknown
+expected counts stay `null` through collection/relay/storage; real zero remains
+zero. Popup progress no longer reports an invented 18%, and its accessible
+description reads “전체 100명 중 23명 수집”. Popup/panel show the existing 429
+pause deadline and keep stop available. Reopening does not restart the pause;
+cancelled/finished and previous-profile views do not promise resumption.
+
+`run-diagnostics.js` bounds/sanitizes two list modes, eight fixed failure
+categories, counts and a pause timestamp. Debugger and DevTools reasons reach
+stored progress, Korean warnings and panel diagnostic copy; unknown fields
+and arbitrary text are discarded. Body-read and delivery failures are separate.
+The additions do not change exact/assisted membership or completion rules.
+Older progress without diagnostics still renders; prior stored zero counts
+cannot be reclassified as unknown retrospectively and need a fresh run.
+
+- `npm test`: passed, including new collector -> relay -> stored-progress checks, reason bounds/privacy, 429 immediate publication/deduplication, late signal rejection after cancellation and body/delivery failure distinction.
+- `npm run ui:e2e`: passed at popup 320/360/420px and panel 320/736/1024px. Checks cover unknown/zero/known totals, 60 -> 50 second countdown, rereading a saved deadline, cancellation, profile mismatch, diagnostic copy and existing search/expansion behavior. Synthetic 320px popup and 736px panel screenshots were visually inspected; no horizontal overflow.
+- `npm run e2e` and `npm run e2e:capture`: both passed with exit code 0 on reruns; all six collection scenarios and capture/cancel/restart/navigation assertions passed. The initial concurrent browser commands reported all assertions passed but lingered after browser shutdown and were stopped with SIGTERM (143). A diagnostic capture rerun returned from the module with a remaining socket/timer and later also exited 0. No runner/dependency change was made and the cause of the initial delay is not established; retain this first-attempt limit rather than count those interrupted commands as clean passes.
+- `git diff --check`: passed. No live Instagram/account work, dependency installation, permission change, commit or release. Existing uncommitted kit documentation/instructions were preserved.
+- Independent review: **blocked/unreviewed** under `docs/CHANGE_REVIEW.md`, because shared messages and stored progress formats changed. Current tools do not provide the required enforced read-only/allowlisted reviewer boundary; the documented earlier CLI boundary trial also failed. No fresh reviewer was started, and author checks are not a substitute. Owner next step: human review of the fixed scope below, or a supported restricted environment with successful harmless probes. No review-driven corrections have been proposed/applied.
+- Still deferred: research item 4 (real toolbar-action permission coverage / Puppeteer upgrade), partial recollection, downloads/import, side panel, permanent history, broad module extraction and CI.
+- To use the local change, reload the unpacked extension and Instagram tab, and close/reopen DevTools if using its capture. Live normal-completion and manual-stop checks remain pending.
+
+### Fixed implementation scope for review
+
+Base: `main`, `c022f649f6a9a05a3b001d61fb5cf5d7b5d6d0e0`. These files were
+clean or absent at task start; review their diff against that base, including
+the two new files. SHA-256 identifies their post-implementation contents:
+
+```text
+2a9f40aa5c3e3ffaf3f9cee25ccea2f1e6959794724072eb067a6a249651291b  background.js
+fba161ed5d4bcc89b5d6557b291b08c3fe9fcb5afa65444ebc0542e76fd43240  debugger-capture.js
+97313051b916f436d7729354255c2ce387da79c1dd5a3b040a1a871382288a0a  devtools-panel.html
+2897cd7bfbedc5a6d183af4b800543deeed5640d5fff1562633bb17ee0d19e28  devtools-panel.js
+2ec0e05d4c0d223597ae78d53c79784f174b46cb098709944492ff63c2b8c95f  devtools.js
+95325db78116a6c1386ccb63dfee919d8114879d445ab73ac6a9c7f4be333760  main.js
+16c2a3c33aaeb53f8e2955d9bfb2ffa57040424c5bcb39d75ea37f75064252ca  package.json
+c5f02f87c0dd5e28f3bb4a14448abb80c6936d3f5a7c748af9c23f3d1b8b5176  popup.css
+1c2ecb5ead52e02e3237db033c69a3fd38988e7308ade84942e2a8ebd75b6147  popup.html
+fd96d6a43b4053bce2061e6113ae7fe57ab130340839591583f00c9769241b97  popup.js
+becf6a9ce64a3e8d9e7b87943f5bc417c8f5024ceb560dccd551c049cdeb0087  run-diagnostics.js
+565754b51a2ca7d08550c28058b9493b511d438a22b50d3fbb366fe9e04b4e18  tools/account-list-render-fixtures.mjs
+839093931c924d9c043a7788287cc58674e3605bd2458f98f694a292ee4fe9a3  tools/debugger-capture-fixtures.mjs
+056bb5489f11a573749da518fb23e76e4a099e900e544a9976a3bad2e0694064  tools/devtools-capture-fixtures.mjs
+d5f6a7ad90143e74fff4c7a7571d07df1cf146e863931a1e488234302a34d7a4  tools/e2e/build-test-extension.mjs
+8c6f8e47258d91aea91a5a7eef0306764cfba18870d44c491105165fd5eeec73  tools/run-diagnostics-fixtures.mjs
+```
+
+Supporting documentation is limited to this entry, the 2026-09-21 sections in
+`docs/BACKLOG.md` and `docs/REFERENCES.md`, and the progress-diagnostics paragraph
+under `docs/SECURITY.md` Storage Policy. Review those additions only; other dirty
+documentation predates this task. Roll back only the selected implementation
+diff and these additions after checking for drift, never the whole worktree.
+
 ## Current handoff — 2026-09-18, v1.8.0
 
 The popup and DevTools panel now let the user stop collection and retain a clearly marked partial result. Saved account lists support username search and distinguish the full result count from the stored subset. Session storage removes older profile results when capacity is needed.

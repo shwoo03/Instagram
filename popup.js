@@ -27,6 +27,11 @@
     stopping: false
   };
 
+  const insightsHost = document.createElement("div");
+  insightsHost.className = "result-insights";
+  elements.accountDetailsSection.before(insightsHost);
+  const insights = globalThis.IGResultInsightsUI.mount(insightsHost);
+
   function isObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
@@ -64,6 +69,8 @@
       stage: typeof record.stage === "string" ? record.stage : "",
       status: typeof record.status === "string" ? record.status : "",
       updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+      diagnostics: globalThis.IGRunDiagnostics.sanitize(record.diagnostics),
+      completion: globalThis.IGResultInsights.sanitizeCompletion(record.completion),
       counts: {
         followers: normalizeList(counts.followers),
         following: normalizeList(counts.following),
@@ -143,6 +150,8 @@
       retry: ["재실행 필요", "warning", "추가 확인 필요", verdictLabel || "DevTools 재실행 필요", action || "DevTools를 연 뒤 프로필을 새로고침하고 다시 실행해 주세요."],
       error: ["오류", "danger", "실행 중 문제 발생", verdictLabel || "비교를 완료하지 못했습니다", action || "저장 또는 실행 상태를 확인한 뒤 다시 시도해 주세요."]
     };
+    const cooldown = globalThis.IGRunDiagnostics.cooldownText(record?.diagnostics, state === "running");
+    if (cooldown) views.running = ["대기 중", "info", "Instagram 요청 제한", "잠시 쉬었다가 수집합니다", cooldown];
     const [badge, tone, kicker, title, description] = views[state];
     elements.stateBadge.textContent = badge;
     setTone(tone);
@@ -180,14 +189,18 @@
     const list = record?.counts?.[mode] || normalizeList(null);
     const current = Math.max(list.confirmed || 0, list.assisted || 0);
     const expected = list.expected;
-    const percent = expected && expected > 0 ? Math.min(100, Math.round((current / expected) * 100)) : 18;
+    const percent = expected === null ? null : expected > 0 ? Math.min(100, Math.round((current / expected) * 100)) : 0;
     elements.progressLabel.textContent = mode === "following" ? "팔로잉 수집 중" : "팔로워 수집 중";
-    elements.progressValue.textContent = `${formatCount(current)} / ${formatCount(expected)}`;
-    elements.progressBar.style.width = `${percent}%`;
+    elements.progressValue.textContent = expected === null
+      ? `${formatCount(current)}명 수집 · 전체 인원 확인 중`
+      : `${formatCount(current)} / ${formatCount(expected)}`;
+    elements.progressBar.style.width = `${percent ?? 0}%`;
     const track = elements.progressBar.parentElement;
-    track.setAttribute("aria-valuenow", String(percent));
-    if (expected === null) track.removeAttribute("aria-valuetext");
-    else track.setAttribute("aria-valuetext", `${current}명 중 ${expected}명`);
+    track.dataset.indeterminate = String(percent === null);
+    if (percent === null) track.removeAttribute("aria-valuenow");
+    else track.setAttribute("aria-valuenow", String(percent));
+    track.setAttribute("aria-valuetext", expected === null
+      ? `${current}명 수집, 전체 인원 확인 중` : `전체 ${expected}명 중 ${current}명 수집`);
   }
 
   function renderConnection(record, state) {
@@ -244,7 +257,7 @@
       elements.warningList.replaceChildren();
       return;
     }
-    const warnings = [...(record?.warnings || [])];
+    const warnings = [...globalThis.IGRunDiagnostics.messages(record?.diagnostics), ...(record?.warnings || [])];
     if (record?.verdict.recommendedActionKo && ["partial", "retry", "error"].includes(state)) {
       warnings.unshift(record.verdict.recommendedActionKo);
     }
@@ -311,6 +324,8 @@
     renderAccountDetails(record, state);
     renderWarnings(record, state);
     renderButton(state);
+    insights.render(ui.starting || ["stale-profile", "no-tab"].includes(state) ? null : record,
+      { tabId: ui.tabId, profile: ui.currentProfile });
   }
 
   function isInstagramUrl(value) {
@@ -400,8 +415,10 @@
   const ageTimer = window.setInterval(() => {
     if (document.hidden) return;
     const record = ui.record ? normalizeRecord(ui.record) : null;
-    renderRunContext(deriveState(record), record);
-  }, 15000);
+    const state = deriveState(record);
+    renderRunContext(state, record);
+    setStatusView(state, record);
+  }, 1000);
   window.addEventListener("pagehide", () => window.clearInterval(ageTimer), { once: true });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {

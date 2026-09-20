@@ -59,6 +59,7 @@ const context = vm.createContext({
 });
 vm.runInContext(accuracySource, context, { filename: 'accuracy-engine.js' });
 vm.runInContext(parserSource, context, { filename: 'network-payload-parser.js' });
+vm.runInContext(fs.readFileSync(new URL('../run-diagnostics.js', import.meta.url), 'utf8'), context);
 vm.runInContext(captureSource, context, { filename: 'debugger-capture.js' });
 
 const Capture = context.IGDebuggerCapture;
@@ -191,6 +192,20 @@ function receive(fake, id, order = 1) {
   await controller.flush();
   assert.equal(controller.getSession(11).listHealth.followers.failedCount, 1);
   assert.equal(controller.getSession(11).listHealth.following.failedCount, 0);
+  assert.equal(controller.getSession(11).listHealth.followers.failureReasons.body_unavailable, 1);
+  await controller.stop(11);
+}
+{
+  const fake = createFakeChrome();
+  const controller = Capture.createController({ chromeApi: fake.chromeApi, parser: context.IGNetworkPayloadParser,
+    onEvidence: () => { throw new Error('synthetic delivery failure'); } });
+  await controller.start(11);
+  controller.bind(11, { runId: 'delivery-failed', profile: 'owner' });
+  receive(fake, 'delivery');
+  await controller.flush();
+  assert.equal(controller.getSession(11).listHealth.followers.failureReasons.delivery_failed, 1);
+  controller.bind(11, { runId: 'next-run', profile: 'owner' });
+  assert.equal(Object.keys(controller.getSession(11).listHealth.followers.failureReasons).length, 0);
   await controller.stop(11);
 }
 {
