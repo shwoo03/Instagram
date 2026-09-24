@@ -34,4 +34,15 @@ const late = request('2026-09-05T00:00:03Z');
 onNavigated.emit('https://www.instagram.com/other/');
 late(JSON.stringify({ users: [{ username: 'stale' }], has_more: false }));
 assert.equal(messages.filter((item) => item.type === 'IG_DEVTOOLS_USERNAMES').length, 2);
+function errorRequest(status, mimeType) {
+  let callback;
+  onRequestFinished.emit({ request: { url: 'https://www.instagram.com/api/v1/friendships/123/following/' }, response: { status, content: { mimeType } }, _resourceType: 'fetch', startedDateTime: '2026-09-05T00:00:04Z', getContent: (fn) => { callback = fn; } });
+  return callback;
+}
+errorRequest(400, 'application/json')(JSON.stringify({ message: 'feedback_required', spam: true, status: 'fail' }));
+const blockedStatus = messages.find((item) => item.reason === 'instagram-blocked');
+assert.equal(blockedStatus?.blockCode, 'feedback_required', 'JSON 4xx warnings are reported with a fixed code');
+assert.equal(JSON.stringify(blockedStatus).includes('spam'), false);
+errorRequest(401, 'text/html')('<html>login</html>');
+assert(messages.some((item) => item.reason === 'instagram-blocked' && item.blockCode === 'login_required'), 'HTML 401 on a list endpoint is still checked');
 console.log('DevTools capture fixtures passed');

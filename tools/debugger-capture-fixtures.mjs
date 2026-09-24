@@ -221,4 +221,48 @@ function receive(fake, id, order = 1) {
   await controller.flush();
   assert.equal(evidence.length, 0, 'stop must seal late body reads');
 }
+{
+  const statuses = [];
+  const evidence = [];
+  const fake = createFakeChrome({ getBody: () => ({
+    body: JSON.stringify({ message: 'checkpoint_required', checkpoint_url: 'https://www.instagram.com/challenge/secret/', status: 'fail' }),
+    base64Encoded: false
+  }) });
+  const controller = Capture.createController({ chromeApi: fake.chromeApi, parser: context.IGNetworkPayloadParser,
+    onEvidence: (item) => evidence.push(item), onStatus: (item) => statuses.push(item) });
+  await controller.start(11);
+  controller.bind(11, { runId: 'blocked', profile: 'owner' });
+  fake.onEvent.emit({ tabId: 11 }, 'Network.responseReceived', {
+    requestId: 'blocked-body', type: 'Fetch',
+    response: { url: 'https://www.instagram.com/api/v1/friendships/123/followers/', status: 400, mimeType: 'application/json' }
+  });
+  assert.equal(controller.getSession(11).listHealth.followers.pendingCount, 1, '4xx list responses wait for their body');
+  fake.onEvent.emit({ tabId: 11 }, 'Network.loadingFinished', { requestId: 'blocked-body' });
+  await controller.flush();
+  const blocked = statuses.find((status) => status.type === 'blocked');
+  assert(blocked, 'a checkpoint body emits a blocked status');
+  assert.equal(blocked.blockCode, 'checkpoint_required');
+  assert.equal(blocked.httpStatus, 400);
+  assert.equal(JSON.stringify(statuses).includes('secret'), false, 'warning URLs and bodies are discarded');
+  assert.equal(evidence.length, 0);
+  assert.equal(controller.getSession(11).listHealth.followers.failureReasons.http_failed, 1);
+  assert.equal(controller.getSession(11).listHealth.followers.pendingCount, 0);
+
+  statuses.length = 0;
+  fake.onEvent.emit({ tabId: 11 }, 'Network.responseReceived', {
+    requestId: 'login-failed', type: 'Fetch',
+    response: { url: 'https://www.instagram.com/api/v1/friendships/123/following/', status: 401, mimeType: 'text/html' }
+  });
+  fake.onEvent.emit({ tabId: 11 }, 'Network.loadingFailed', { requestId: 'login-failed' });
+  assert.equal(statuses.find((status) => status.type === 'blocked')?.blockCode, 'login_required');
+
+  statuses.length = 0;
+  fake.onEvent.emit({ tabId: 11 }, 'Network.responseReceived', {
+    requestId: 'server-error', type: 'Fetch',
+    response: { url: 'https://www.instagram.com/api/v1/friendships/123/followers/', status: 500, mimeType: 'application/json' }
+  });
+  assert.equal(statuses.some((status) => status.type === 'blocked'), false, '5xx is a capture failure, not a warning');
+  assert.equal(controller.getSession(11).listHealth.followers.failureReasons.http_failed, 2);
+  await controller.stop(11);
+}
 console.log('debugger capture fixtures passed');

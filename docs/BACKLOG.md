@@ -1,5 +1,21 @@
 # Backlog
 
+## 2026-09-25 Live overcount follow-up
+
+- Done: small confirmed-over-displayed gap with proven network end is `CONFIRMED_NETWORK_END` (live: 285 listed vs 284 displayed).
+- Done: keep scrolling past the displayed count until strict pagination is terminal.
+- Open: warn/pause when the Instagram tab becomes hidden during collection (live: background tabs stop list loading).
+- Open: one live comparison after reloading the extension to confirm the followers verdict.
+
+## 2026-09-24 Warning stop, list-end cursor, native input and pacing
+
+- Done: stop immediately (no retry) on non-429 Instagram warnings from Debugger/DevTools list responses or challenge/login page paths; keep the partial result with a Korean verdict.
+- Done: treat a missing `next_max_id` on v1 friendships pages as terminal pagination; conflicting cursor/`has_more` stays non-terminal. Exit scrolling after 2 stable ticks when strict pagination and the visible list end agree.
+- Done: remove synthetic wheel/PageDown/mouse-sequence/Escape events; use native clicks and scroll position only.
+- Done: response-arrival scrolling with a 1.5s minimum interval after each strict page; report page intervals.
+- Open: live check against real Instagram — confirm v1 cursor fields, page size, measured intervals, and that native scrolling still loads every page. Tune `NETWORK_PAGE_MIN_INTERVAL_MS` from measured data.
+- Open: run-to-run cooldown and official data-export import (researched 2026-09-24, not selected).
+
 ## 2026-09-21 Account lookup and result explanations
 
 - Implemented selected next items 1–3: full-memory username lookup in popup/panel, per-list completion evidence, and privacy-filtered diagnostic copy in both views.

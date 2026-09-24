@@ -16,6 +16,7 @@
     "response-timeout": "response_timeout",
     "http-response-failed": "http_failed",
     "non-success-status": "http_failed",
+    "instagram-block-signal": "http_failed",
     "loading-failed": "body_unavailable",
     "empty-response-body": "body_unavailable",
     "response-body-unavailable": "body_unavailable",

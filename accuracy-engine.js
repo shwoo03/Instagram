@@ -12,7 +12,8 @@
         "scroll_box_detached",
         "modal_closed",
         "run_superseded",
-        "user_cancelled"
+        "user_cancelled",
+        "instagram_blocked"
     ]));
     const SAFE_DOM_END_REASONS = Object.freeze(new Set([
         "list_end_observed",
@@ -214,6 +215,23 @@
             });
         }
 
+        // v1 friendships 목록은 다음 페이지 커서(next_max_id)가 없을 때 마지막 페이지다.
+        // 커서 부재는 users 배열과 big_list/page_size가 함께 있는 목록 응답에서만 종료로 인정한다.
+        function recordCursor(value, itemCount) {
+            const cursor = value.next_max_id;
+            const hasCursor = (typeof cursor === "string" && cursor.trim() !== "") ||
+                (typeof cursor === "number" && Number.isFinite(cursor));
+            if (hasCursor) {
+                observations.push({ hasMore: true, reason: "next_max_id_present", itemCount: itemCount === null ? 0 : itemCount });
+                return;
+            }
+            const friendshipsPage = Array.isArray(value.users) &&
+                (typeof value.big_list === "boolean" || Number.isFinite(value.page_size));
+            if (friendshipsPage) {
+                observations.push({ hasMore: false, reason: "next_max_id_absent", itemCount: itemCount === null ? 0 : itemCount });
+            }
+        }
+
         function isTrustedListContainer(path, depth) {
             if (depth === 0) return true;
             const key = String(path[path.length - 1] || "").toLowerCase();
@@ -233,6 +251,7 @@
                 record("has_next_page", value.has_next_page, contextualCount);
                 record("more_available", value.more_available, contextualCount);
             }
+            if (trustedOwnList) recordCursor(value, itemCount);
 
             for (const [key, child] of Object.entries(value)) {
                 if (!child || typeof child !== "object") continue;
@@ -406,6 +425,16 @@
         ) {
             state = "CONFIRMED_NETWORK_END";
             reasons.push("cdp_pagination_terminal", "dom_list_end_observed", "small_gap_within_tolerance");
+        } else if (
+            evidence.strictEligible &&
+            expected.exact &&
+            gap !== null && gap < 0 && -gap <= tolerance &&
+            pagination.paginationRecognized === true && pagination.terminal === true &&
+            domEndObserved && unsafeReasons.length === 0
+        ) {
+            // 목록 API가 마지막 페이지까지 표시 수보다 조금 더 반환한 경우: 화면 카운터 집계 차이로 본다.
+            state = "CONFIRMED_NETWORK_END";
+            reasons.push("cdp_pagination_terminal", "dom_list_end_observed", "displayed_count_below_network_list");
         } else if (!evidence.strictEligible && unsafeReasons.length === 0) {
             const exactAssistedMatch = expected.exact && assistedGap === 0 && assistedTotalCount > 0;
             const endedAssistedRun = domEndObserved && (assistedTotalCount > 0 || evidence.pageNetworkExactPayloadCount > 0);

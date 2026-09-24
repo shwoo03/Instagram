@@ -50,6 +50,23 @@
     const RATE_LIMIT_MAX_EVENTS = 3;
     const RATE_LIMIT_DEDUP_WINDOW_MS = 10_000;
     const RUN_PROGRESS_THROTTLE_MS = 750;
+    // 확정 네트워크 캡처가 동작할 때만 쓰는 응답 도착 기준 스크롤 간격(요청 밀도 상한). 실측 후 조정한다.
+    const NETWORK_PAGE_MIN_INTERVAL_MS = 1500;
+    const NETWORK_PAGE_INTERVAL_JITTER_MS = 500;
+    const NETWORK_PAGE_WAIT_MAX_MS = 4000;
+    const NETWORK_PAGE_RENDER_SETTLE_MS = 180;
+    const NETWORK_PAGE_NEAR_BOTTOM_PX = 80;
+    const NETWORK_END_MIN_STABLE_TICKS = 2;
+    const INSTAGRAM_BLOCK_LABELS = Object.freeze({
+        checkpoint_required: "본인 확인(checkpoint/challenge) 요청",
+        feedback_required: "활동 제한 경고(feedback_required)",
+        login_required: "로그인 요구 또는 세션 만료",
+        please_wait: "'잠시 후 다시 시도' 경고",
+        access_denied: "목록 요청 접근 거부(403)",
+        blocked_page: "본인 확인/로그인 페이지로 이동",
+        unknown_warning: "종류를 확인하지 못한 경고 응답"
+    });
+    const BLOCKED_PAGE_PATH_RE = /^\/(challenge|checkpoint|accounts\/(login|suspended|disabled))(\/|$)/i;
     const DOM_TIER_SOURCES = new Set(["DOM", "dom-observer"]);
     const DOM_CANDIDATE_SOURCES = new Set(["dom-candidate", "dom-observer-candidate"]);
     const STRICT_NETWORK_SOURCES = new Set(["DevTools", "Debugger", "XHR", "fetch"]);
@@ -228,9 +245,25 @@
             pausedUntilMs: 0,
             lastOrigin: null
         },
+        instagramBlock: null,
+        networkPacing: {
+            followers: createNetworkPacingState(),
+            following: createNetworkPacingState()
+        },
         runTimeline: [],
         captureHealth: { debugger: {}, devtools: {} }
     };
+
+    function createNetworkPacingState() {
+        return {
+            pageCount: 0,
+            lastArrivalAtMs: 0,
+            intervalSumMs: 0,
+            intervalCount: 0,
+            minIntervalMs: null,
+            waitTimeouts: 0
+        };
+    }
 
     function createRunCapability() {
         try {
@@ -371,6 +404,7 @@
     }
 
     function hasProfileChanged() {
+        detectBlockedPageLocation();
         return Boolean(state.runProfile) &&
             state.runProfile !== "unknown_profile" &&
             getProfileKey() !== state.runProfile;
@@ -405,6 +439,31 @@
         recordRunEvent("rate_limit_detected", { origin, count: state.rateLimit.count, pauseMs });
         emitRunProgress(`collecting_${state.activeCollectionMode}`, "running", { status: "running" }, { force: true });
         console.log(`🚦 Instagram 요청 제한(429) 신호 감지 (출처: ${origin}, ${state.rateLimit.count}회째). 스크롤을 약 ${Math.round(pauseMs / 1000)}초 일시정지합니다.`);
+    }
+
+    // 429 이외의 Instagram 경고는 재시도하지 않고 즉시 멈춘다. 사용자 중단과 같은 경로로 부분 결과를 보존한다.
+    function registerInstagramBlockSignal(code, origin) {
+        if (cancellationRequested || window.__igFollowerRunInProgress !== true) return;
+        const safeCode = Object.hasOwn(INSTAGRAM_BLOCK_LABELS, code) ? code : "unknown_warning";
+        state.instagramBlock = {
+            code: safeCode,
+            origin,
+            detectedAt: new Date().toISOString()
+        };
+        state.lastScrollEndReason = "instagram_blocked";
+        recordRunEvent("instagram_block_detected", { code: safeCode, origin });
+        console.log(
+            `⛔ Instagram 경고 신호 감지: ${INSTAGRAM_BLOCK_LABELS[safeCode]} (출처: ${origin}). ` +
+            "계정 보호를 위해 재시도 없이 수집을 즉시 멈추고 지금까지의 부분 결과를 저장합니다."
+        );
+        cancellationRequested = true;
+        for (const cancel of pendingWaits) cancel();
+    }
+
+    function detectBlockedPageLocation() {
+        if (!BLOCKED_PAGE_PATH_RE.test(location.pathname)) return;
+        registerInstagramBlockSignal("blocked_page", "page-location");
+        throwIfCancelled();
     }
 
     function isVerboseLogging() {
@@ -763,6 +822,8 @@
             followActionEnabled: FOLLOW_ACTION_ENABLED,
             finalDiffPolicy: FINAL_DIFF_POLICY,
             rateLimit: { ...state.rateLimit },
+            instagramBlock: state.instagramBlock ? { ...state.instagramBlock } : null,
+            networkPacing: summarizeNetworkPacing(),
             overallReliability,
             trustVerdict: canonical.verdict,
             warnings,
@@ -1151,6 +1212,15 @@
             ["following", "팔로잉", summary.followingCompletion]
         ];
         for (const [, label, completion] of pairs) {
+            if (completion?.completeAtListEnd && completion.gap < 0) {
+                warnings.push({
+                    code: "displayed_count_below_network_list",
+                    severity: "info",
+                    message: `${label} 목록 응답이 마지막 페이지까지 화면 표시 수보다 ${-completion.gap}명 많은 계정을 돌려줬습니다. 화면 카운터의 집계 차이로 추정되며, 비교는 목록 응답 기준으로 했습니다.`,
+                    affectedFields: []
+                });
+                continue;
+            }
             if (!completion?.completeAtListEnd || completion.gap <= 0) continue;
             warnings.push({
                 code: "displayed_count_includes_inactive",
@@ -1604,6 +1674,9 @@
             if (message.reason === "rate-limited" || message.status === "rate-limited") {
                 registerRateLimitSignal("debugger-network");
             }
+            if (message.status === "blocked") {
+                registerInstagramBlockSignal(message.blockCode || message.reason, "debugger-network");
+            }
             sendResponse?.({ ok: true, status: getDebuggerBridgeSnapshot() });
             return false;
         }
@@ -1636,6 +1709,7 @@
             const pagination = state.pagination[mode];
             pagination.debuggerExactPayloadCount++;
             pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
+            noteNetworkPageArrival(mode);
             Object.assign(pagination, globalThis.IGAccuracyEngine.mergePaginationEvidence(pagination, message.pagination, "debugger", message.requestOrder));
             demoteDomOnlyConfirmedUsers(mode, "debugger-exact-evidence-arrived");
         }
@@ -1798,6 +1872,9 @@
                 if (message.reason === "rate-limited") {
                     registerRateLimitSignal("devtools");
                 }
+                if (message.reason === "instagram-blocked") {
+                    registerInstagramBlockSignal(message.blockCode, "devtools");
+                }
 
                 const stats = message.stats || {};
                 const statusKey = JSON.stringify({
@@ -1857,6 +1934,7 @@
                 const pagination = state.pagination[mode];
                 pagination.exactPayloadCount++;
                 pagination.lastCapturedAt = message.capturedAt || new Date().toISOString();
+                noteNetworkPageArrival(mode);
                 Object.assign(pagination, globalThis.IGAccuracyEngine.mergePaginationEvidence(pagination, message.pagination, "devtools", message.requestOrder));
             }
             if (!isAmbiguousNetwork) {
@@ -2884,7 +2962,7 @@
         await wait(260, 140);
 
         const guardResult = await withFollowClickNavigationGuard(button, async () => {
-            humanLikeElementClick(button);
+            button.click();
         });
         if (guardResult && guardResult.blocked) {
             return { ok: false, reason: "navigation-blocked" };
@@ -2897,7 +2975,7 @@
             return { ok: true, reason: "state-changed", beforeHref };
         }
 
-        // 일부 환경에서 사용자 이벤트 시뮬레이션이 지연되므로 native click으로 한번 더 보완
+        // 첫 클릭 후 상태 변화가 늦는 환경을 위해 한 번 더 확인한다.
         const fallbackGuard = await withFollowClickNavigationGuard(button, async () => {
             button.click();
         });
@@ -2952,48 +3030,6 @@
 
             return true;
         });
-    }
-
-    function humanLikeElementClick(element) {
-        const rect = element.getBoundingClientRect();
-        const x = rect.left + (rect.width * Math.random());
-        const y = rect.top + (rect.height * Math.random());
-
-        const sendEvent = (type) => {
-            element.dispatchEvent(new MouseEvent(type, {
-                view: window,
-                bubbles: true,
-                cancelable: true,
-                clientX: x,
-                clientY: y,
-                buttons: 1
-            }));
-        };
-
-        const sendMove = (x, y) => {
-            element.dispatchEvent(new MouseEvent("mousemove", {
-                view: window,
-                bubbles: true,
-                cancelable: true,
-                clientX: x,
-                clientY: y
-            }));
-            element.dispatchEvent(new MouseEvent("mouseenter", {
-                view: window,
-                bubbles: true,
-                cancelable: true,
-                clientX: x,
-                clientY: y
-            }));
-        };
-
-        sendMove(x, y);
-        sendEvent("mouseover");
-        sendMove(rect.left + rect.width * 0.3 + (rect.width * 0.4 * Math.random()), y);
-        sendMove(rect.left + rect.width * 0.6 + (rect.width * 0.3 * Math.random()), y);
-        sendEvent("mousedown");
-        sendEvent("mouseup");
-        sendEvent("click");
     }
 
     function findDialogElement() {
@@ -3097,7 +3133,7 @@
                 const target = candidates[i];
                 console.log(`🧭 닫기 후보 선택: #${i + 1}`, target.label, target.reason, target.rect.width, target.rect.height);
                 const el = target.clickable;
-                humanLikeElementClick(el);
+                el.click();
                 if (await waitForDialogClosed()) {
                     return true;
                 }
@@ -3129,21 +3165,19 @@
             const element = document.elementFromPoint(probeX, probeY);
             if (element) {
                 console.log("🧭 닫기 fallback 좌표 클릭 시도");
-                humanLikeElementClick(element);
+                element.click();
                 if (await waitForDialogClosed()) return true;
             }
         }
 
-        const esc = new KeyboardEvent("keydown", {
-            key: "Escape",
-            code: "Escape",
-            keyCode: 27,
-            which: 27,
-            bubbles: true
-        });
-        document.dispatchEvent(esc);
-        await wait(700, 200);
-        if (!isDialogOpen()) return true;
+        // 합성 Escape 키 대신, 이번 실행 프로필의 목록 경로로 열린 모달일 때만 뒤로 가기로 닫는다.
+        const modalPath = new RegExp(`^/${String(state.runProfile || "").replace(/\./g, "\\.")}/(followers|following)/?$`, "i");
+        if (state.runProfile && modalPath.test(location.pathname) && window.history.length > 1) {
+            console.log("🧭 닫기 fallback: 목록 경로에서 뒤로 가기");
+            window.history.back();
+            await wait(700, 200);
+            if (!isDialogOpen()) return true;
+        }
         return false;
     }
 
@@ -3180,6 +3214,79 @@
         return diagnostic;
     }
 
+    function noteNetworkPageArrival(mode) {
+        const pacing = state.networkPacing[mode];
+        if (!pacing) return;
+        const now = Date.now();
+        if (pacing.lastArrivalAtMs) {
+            const interval = now - pacing.lastArrivalAtMs;
+            pacing.intervalCount++;
+            pacing.intervalSumMs += interval;
+            pacing.minIntervalMs = pacing.minIntervalMs === null ? interval : Math.min(pacing.minIntervalMs, interval);
+        }
+        pacing.pageCount++;
+        pacing.lastArrivalAtMs = now;
+    }
+
+    function summarizeNetworkPacing() {
+        return Object.fromEntries(["followers", "following"].map((mode) => {
+            const pacing = state.networkPacing[mode];
+            return [mode, {
+                pageCount: pacing.pageCount,
+                avgIntervalMs: pacing.intervalCount ? Math.round(pacing.intervalSumMs / pacing.intervalCount) : 0,
+                minIntervalMs: pacing.minIntervalMs ?? 0,
+                waitTimeouts: pacing.waitTimeouts,
+                minIntervalSettingMs: NETWORK_PAGE_MIN_INTERVAL_MS
+            }];
+        }));
+    }
+
+    // 확정 캡처(DevTools/Debugger)가 이 목록의 첫 페이지를 받은 뒤에만 응답 도착 기준으로 스크롤한다.
+    function isNetworkPacingActive(mode) {
+        return (isDebuggerBridgeReady() || isDevtoolsBridgeFresh()) && state.networkPacing[mode].pageCount > 0;
+    }
+
+    function getNetworkListEndState(mode) {
+        const pagination = state.pagination[mode];
+        const strictPages = (pagination.exactPayloadCount || 0) + (pagination.debuggerExactPayloadCount || 0);
+        const pendingCount = (state.captureHealth.debugger[mode]?.pendingCount || 0) +
+            (state.captureHealth.devtools[mode]?.pendingCount || 0);
+        return {
+            terminal: strictPages > 0 && pagination.recognized === true && pagination.terminal === true,
+            pendingCount,
+            reason: pagination.terminalReason || ""
+        };
+    }
+
+    // 직전 페이지가 도착한 뒤 최소 간격을 지켜야 다음 스크롤(=다음 요청 유발)을 한다.
+    async function waitForNetworkPageInterval(mode) {
+        const pacing = state.networkPacing[mode];
+        if (!pacing.lastArrivalAtMs) return;
+        const remainMs = NETWORK_PAGE_MIN_INTERVAL_MS - (Date.now() - pacing.lastArrivalAtMs);
+        if (remainMs > 0) await wait(remainMs, NETWORK_PAGE_INTERVAL_JITTER_MS);
+    }
+
+    async function waitForNetworkPageAfterScroll(scrollBox, mode, pagesBeforeScroll) {
+        const nearBottom = scrollBox.scrollTop + scrollBox.clientHeight >= scrollBox.scrollHeight - NETWORK_PAGE_NEAR_BOTTOM_PX;
+        if (!nearBottom || getNetworkListEndState(mode).terminal) {
+            await wait(NETWORK_PAGE_RENDER_SETTLE_MS + 120, 120);
+            return { mode: "render", arrived: false, waitedMs: 0 };
+        }
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < NETWORK_PAGE_WAIT_MAX_MS) {
+            await wait(100, 0);
+            if (state.networkPacing[mode].pageCount > pagesBeforeScroll) {
+                await wait(NETWORK_PAGE_RENDER_SETTLE_MS, 80);
+                return { mode: "page", arrived: true, waitedMs: Date.now() - startedAt };
+            }
+            if (Date.now() < state.rateLimit.pausedUntilMs) {
+                return { mode: "page", arrived: false, paused: true, waitedMs: Date.now() - startedAt };
+            }
+        }
+        state.networkPacing[mode].waitTimeouts++;
+        return { mode: "page", arrived: false, waitedMs: Date.now() - startedAt };
+    }
+
     async function performListScroll(scrollBox, options = {}) {
         const profileLinks = Array.isArray(options.profileLinks) ? options.profileLinks : getProfileLinksIn(scrollBox);
         const stableTicks = Number(options.stableTicks || 0);
@@ -3187,28 +3294,8 @@
         const useStrongScroll = forceRecovery || stableTicks >= 2;
         const useFullRecoveryScroll = forceRecovery || stableTicks >= 4;
 
-        if (useStrongScroll && scrollBox instanceof HTMLElement) {
-            if (!scrollBox.hasAttribute("tabindex")) {
-                scrollBox.setAttribute("tabindex", "-1");
-            }
-            try {
-                scrollBox.focus({ preventScroll: true });
-            } catch {
-                scrollBox.focus();
-            }
-        }
-
+        // 합성 휠/키 이벤트는 쓰지 않는다. 브라우저 스크롤 위치 변경만으로 목록 로딩을 유도한다.
         const lastProfileLink = profileLinks.slice(-1)[0];
-
-        if (useStrongScroll) {
-            scrollBox.dispatchEvent(new WheelEvent("wheel", {
-                view: window,
-                bubbles: true,
-                cancelable: true,
-                deltaY: Math.max(700, scrollBox.clientHeight * 0.9),
-                deltaMode: 0
-            }));
-        }
 
         if (useStrongScroll && lastProfileLink) {
             lastProfileLink.scrollIntoView({ behavior: "auto", block: "end" });
@@ -3222,14 +3309,6 @@
         await wait(useStrongScroll ? 260 : 180, 120);
 
         if (useFullRecoveryScroll) {
-            scrollBox.dispatchEvent(new KeyboardEvent("keydown", {
-                key: "PageDown",
-                code: "PageDown",
-                keyCode: 34,
-                which: 34,
-                bubbles: true
-            }));
-
             await wait(260, 120);
             scrollBox.scrollTo({ top: scrollBox.scrollHeight, behavior: "auto" });
         }
@@ -3299,6 +3378,7 @@
             phase: `${modeLabel}-recovery`,
             forceEvidence: true
         });
+        if (isNetworkPacingActive(modeLabel)) await waitForNetworkPageInterval(modeLabel);
         await performListScroll(activeScrollBox, { profileLinks: recoveryLinks, forceRecovery: true });
         await wait(1200, 400);
         const domAfter = collectFromDOM(activeScrollBox, targetSet);
@@ -3424,6 +3504,7 @@
                 if (!isUsableScrollBox(scrollBox)) {
                     return { ok: false, passes: pass - 1, finalCount: targetSet.size, reason: "scroll_box_detached" };
                 }
+                if (isNetworkPacingActive(modeLabel)) await waitForNetworkPageInterval(modeLabel);
                 scrollBox.scrollTop = Math.floor(maxTop * point);
                 await wait(520, 180);
 
@@ -3433,6 +3514,7 @@
                     return { ok: true, passes: pass, finalCount: targetSet.size, reason: "target_reached_checkpoint" };
                 }
 
+                if (isNetworkPacingActive(modeLabel)) await waitForNetworkPageInterval(modeLabel);
                 await performListScroll(scrollBox, { forceRecovery: true });
                 await wait(760, 240);
 
@@ -3470,6 +3552,7 @@
         let lastCount = 0;
         let recoveryAttempts = 0;
         let pausedTotalMs = 0;
+        let networkEndWaitLogged = false;
         const baseLog = modeLabel === "following" ? "팔로잉" : "팔로워";
 
         if (options.reset) targetSet.clear();
@@ -3552,7 +3635,14 @@
 
             const strictCount = getStrictUsers(modeLabel).length;
             const waitingForDevtoolsCoverage = limitLabel > 0 && isDevtoolsBridgeFresh() && strictCount < limitLabel;
-            if (limitLabel > 0 && currentCount >= limitLabel && !waitingForDevtoolsCoverage) {
+            // 화면 표시 수가 실제보다 낮을 수 있으므로, 확정 캡처가 목록 끝을 알려 줄 때까지 계속 내린다.
+            const waitingForNetworkEnd = limitLabel > 0 && isNetworkPacingActive(modeLabel) &&
+                state.pagination[modeLabel].recognized === true && !getNetworkListEndState(modeLabel).terminal;
+            if (limitLabel > 0 && currentCount >= limitLabel && waitingForNetworkEnd && !networkEndWaitLogged) {
+                networkEndWaitLogged = true;
+                console.log(`📡 ${baseLog} 화면 표시 수(${limitLabel}명)에 도달했지만 네트워크 마지막 페이지가 아직 확인되지 않아 목록 끝까지 확인합니다.`);
+            }
+            if (limitLabel > 0 && currentCount >= limitLabel && !waitingForDevtoolsCoverage && !waitingForNetworkEnd) {
                 console.log(`✅ ${baseLog} 목표 달성: ${currentCount}명`);
                 state.lastScrollEndReason = "target_reached";
                 break;
@@ -3565,17 +3655,24 @@
                 console.log("📌 스크롤 가능한 여유가 없어요. 이미 끝이거나 구조 변경 가능성이 있습니다.");
             }
 
+            const pacingActive = isNetworkPacingActive(modeLabel);
+            if (pacingActive) await waitForNetworkPageInterval(modeLabel);
+            const pagesBeforeScroll = state.networkPacing[modeLabel].pageCount;
             const scrollStrategy = await performListScroll(scrollBox, {
                 profileLinks,
                 stableTicks
             });
             diagnostic.scrollStrategy = scrollStrategy;
-            const waitBase = beforeDom > 0 || observerAdded > 0 || currentCount !== lastCount
-                ? 650
-                : stableTicks >= 2
-                    ? 1400
-                    : 950;
-            await wait(waitBase, 300);
+            if (pacingActive) {
+                diagnostic.networkPacing = await waitForNetworkPageAfterScroll(scrollBox, modeLabel, pagesBeforeScroll);
+            } else {
+                const waitBase = beforeDom > 0 || observerAdded > 0 || currentCount !== lastCount
+                    ? 650
+                    : stableTicks >= 2
+                        ? 1400
+                        : 950;
+                await wait(waitBase, 300);
+            }
 
             if (currentCount === lastCount && beforeDom === 0 && observerAdded === 0) {
                 stableTicks++;
@@ -3587,6 +3684,7 @@
             if (stableTicks > 0 && stableTicks % 2 === 0) {
                 scrollBox.scrollTop = Math.max(0, scrollBox.scrollTop - 420);
                 await wait(400, 200);
+                if (pacingActive) await waitForNetworkPageInterval(modeLabel);
                 await performListScroll(scrollBox, { stableTicks, forceRecovery: stableTicks >= 4 });
             }
 
@@ -3613,6 +3711,27 @@
             }
 
             const endSignalFresh = endSignal.visible && Date.now() - endSignal.atMs < 8000;
+            const networkEnd = getNetworkListEndState(modeLabel);
+            const strictCountNow = getStrictUsers(modeLabel).length;
+            if (
+                networkEnd.terminal &&
+                networkEnd.pendingCount === 0 &&
+                stableTicks >= NETWORK_END_MIN_STABLE_TICKS &&
+                endSignalFresh &&
+                recoveryAttempts === 0 &&
+                (limitLabel === 0 || strictCountNow >= limitLabel - DISPLAYED_COUNT_GAP_TOLERANCE)
+            ) {
+                console.log(`🏁 ${baseLog} 네트워크 마지막 페이지 신호(${networkEnd.reason})와 목록 끝 화면이 함께 확인되어 ${stableTicks}틱 만에 종료합니다.`);
+                recordRunEvent("network_list_end_early_exit", {
+                    mode: modeLabel,
+                    stableTicks,
+                    terminalReason: networkEnd.reason,
+                    strictCount: strictCountNow,
+                    targetCount: limitLabel
+                });
+                state.lastScrollEndReason = "stalled_at_list_end";
+                break;
+            }
             if (
                 stableTicks >= MIN_STABLE_TICKS_AT_LIST_END &&
                 endSignalFresh &&
@@ -3650,6 +3769,13 @@
         }
 
         const result = Array.from(targetSet);
+        const pacingSummary = summarizeNetworkPacing()[modeLabel];
+        if (pacingSummary.pageCount > 0) {
+            console.log(
+                `📶 ${baseLog} 확정 네트워크 페이지 ${pacingSummary.pageCount}개 · 평균 간격 ${pacingSummary.avgIntervalMs}ms · ` +
+                `최소 ${pacingSummary.minIntervalMs}ms · 응답 대기 초과 ${pacingSummary.waitTimeouts}회 (최소 간격 설정 ${pacingSummary.minIntervalSettingMs}ms)`
+            );
+        }
         if (modeLabel === "followers" && shouldKeepScrollBox) {
             state.followersScrollBox = scrollBox;
             state.lastFollowersScrollEndReason = state.lastScrollEndReason;
@@ -3927,7 +4053,7 @@
         const confirmedCount = getStrictUsers(mode).length;
         const assistedTotalCount = getAssistedUsers(mode).length;
         const modeEndReason = mode === "following" ? state.lastFollowingScrollEndReason : state.lastFollowersScrollEndReason;
-        const globallyUnsafeEndReasons = new Set(["rate_limited", "time_cap_reached", "profile_changed", "scroll_box_detached", "modal_closed", "run_superseded", "user_cancelled"]);
+        const globallyUnsafeEndReasons = new Set(["rate_limited", "time_cap_reached", "profile_changed", "scroll_box_detached", "modal_closed", "run_superseded", "user_cancelled", "instagram_blocked"]);
         const endReason = globallyUnsafeEndReasons.has(state.lastScrollEndReason) ? state.lastScrollEndReason : modeEndReason;
         const domTierCandidateFilter = (username) => {
             const sources = Array.from(state.userProvenance[mode]?.get(username)?.sources || []);
@@ -3999,7 +4125,14 @@
         const followersCompletion = getListCompletionAssessment("followers", state.expectedCounts.followers || 0);
         const followingCompletion = getListCompletionAssessment("following", state.expectedCounts.following || 0);
         const integrityOk = diffs?.integrity ? diffs.integrity.ok === true : undefined;
-        const verdict = cancellationRequested ? {
+        const blockLabel = state.instagramBlock ? INSTAGRAM_BLOCK_LABELS[state.instagramBlock.code] : "";
+        const verdict = state.instagramBlock ? {
+            code: "PARTIAL",
+            labelKo: "Instagram 경고 감지 · 부분 결과",
+            severity: "warning",
+            reasons: ["instagram_blocked", `instagram_block:${state.instagramBlock.code}`],
+            recommendedActionKo: `${blockLabel} 신호로 즉시 멈췄습니다. Instagram 앱/웹에서 경고를 먼저 처리하고 몇 시간 뒤 다시 실행하세요.`
+        } : cancellationRequested ? {
             code: "PARTIAL",
             labelKo: "사용자 중단 · 부분 결과",
             severity: "warning",
@@ -4658,6 +4791,9 @@
             pausedUntilMs: 0,
             lastOrigin: null
         };
+        state.instagramBlock = null;
+        state.networkPacing.followers = createNetworkPacingState();
+        state.networkPacing.following = createNetworkPacingState();
         state.runTimeline = [];
         window.__igFollowerRunStartedAt = summary.startedAt;
         recordRunEvent("run_started", { runId: state.runId, startedAt: summary.startedAt });
@@ -4755,6 +4891,9 @@
         }
         if (!summary.followersCollectionStatus) {
             summary.followersCollectionStatus = followersTarget > 0 && followers.length > followersTarget ? "overcount" : "complete";
+            if (summary.followersCollectionStatus === "overcount") {
+                summary.followersCompletion = getListCompletionAssessment("followers", followersTarget);
+            }
         }
 
         if (FOLLOW_ACTION_ENABLED) {
@@ -4890,6 +5029,9 @@
         } else if (!summary.followingCollectionStatus) {
             summary.followingCollectionStatus = "complete";
         }
+        if (followingTarget > 0 && following.length > followingTarget) {
+            summary.followingCompletion = getListCompletionAssessment("following", followingTarget);
+        }
 
         const diffs = addCompareWarningsToDiffs(compareFollowSets(), summary);
         summary.diffs = diffs;
@@ -4912,8 +5054,13 @@
         printSummary(summary);
         console.log("8) 전체 저장 완료");
         } catch (error) {
-            summary.status = cancellationRequested ? "partial_cancelled" : "failed_unhandled_exception";
-            summary.lastError = cancellationRequested ? "사용자가 수집을 중단했습니다." : error?.message || String(error);
+            const blocked = Boolean(state.instagramBlock);
+            summary.status = blocked
+                ? "partial_instagram_blocked"
+                : cancellationRequested ? "partial_cancelled" : "failed_unhandled_exception";
+            summary.lastError = blocked
+                ? `Instagram 경고(${INSTAGRAM_BLOCK_LABELS[state.instagramBlock.code]})가 감지되어 수집을 즉시 중단했습니다.`
+                : cancellationRequested ? "사용자가 수집을 중단했습니다." : error?.message || String(error);
             summary.followersCount = state.collectedUsers.size;
             summary.followingCount = state.followingUsers.size;
             summary.followers = Array.from(state.collectedUsers);
@@ -4921,7 +5068,13 @@
             summary.followersScrollEndReason = state.lastFollowersScrollEndReason || state.lastScrollEndReason || null;
             summary.followingScrollEndReason = state.lastFollowingScrollEndReason || null;
             try {
-                if (cancellationRequested) {
+                if (blocked) {
+                    state.lastScrollEndReason = "instagram_blocked";
+                    summary.diffs = { ...compareFollowSets(), reliability: "partial", warnings: [{
+                        code: "instagram_blocked", severity: "warning",
+                        message: `Instagram 경고(${INSTAGRAM_BLOCK_LABELS[state.instagramBlock.code]}) 전까지 확인한 부분 결과입니다. 재시도는 하지 않았습니다. 한쪽 목록의 누락으로 관계 분류가 부정확할 수 있습니다.`
+                    }] };
+                } else if (cancellationRequested) {
                     state.lastScrollEndReason = "user_cancelled";
                     summary.diffs = { ...compareFollowSets(), reliability: "partial", warnings: [{
                         code: "user_cancelled", severity: "warning",
@@ -4933,7 +5086,9 @@
             } catch (persistError) {
                 console.log("❌ 예외 후 partial 저장에도 실패했습니다:", persistError?.message || String(persistError));
             }
-            console.log(cancellationRequested ? "🛑 중단 전 부분 결과를 저장했습니다." : "❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
+            console.log(blocked
+                ? "⛔ Instagram 경고로 중단하기 전 부분 결과를 저장했습니다. 바로 재실행하지 말고 몇 시간 뒤 다시 실행하세요."
+                : cancellationRequested ? "🛑 중단 전 부분 결과를 저장했습니다." : "❌ 실행 중 예외가 발생해 partial 결과를 저장했습니다:", summary.lastError);
             printSummary(summary);
         } finally {
             await stopAutomaticDebuggerCapture(summary.status || "run-finished");

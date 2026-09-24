@@ -45,6 +45,7 @@ The local-only build intentionally adopts the powerful `debugger` permission:
 - Retrieve only bounded candidate response bodies, immediately extract derived usernames/pagination, and discard raw bodies.
 - Never relay or store URLs with query strings, request/response headers, cookies, tokens, raw bodies, or DMs.
 - Detach on completion, failure, navigation, tab close, or user/Chrome cancellation. Do not auto-reattach.
+- 2026-09-24: 4xx responses on candidate list URLs (and `status: "fail"` 2xx bodies) are read only to classify a fixed warning code (`network-payload-parser.js` `BLOCK_CODES`); the body, message text and URL are discarded. Only the code, HTTP status and existing binding fields are relayed. The same rule applies to `devtools.js`.
 
 ## Extension Permissions
 

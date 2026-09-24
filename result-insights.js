@@ -17,6 +17,7 @@
     cdp_pagination_terminal: "네트워크에서 다음 페이지 없음 확인",
     dom_list_end_observed: "화면 목록 끝 확인",
     small_gap_within_tolerance: "표시 수량과 작은 차이만 남음",
+    displayed_count_below_network_list: "목록 응답이 표시 수량보다 조금 많음(카운터 집계 차이)",
     assisted_exact_count_match: "보조 수량만 표시 수량과 일치",
     assisted_dom_end_observed: "보조 자료로 화면 끝 확인",
     pagination_terminal_not_proven: "네트워크 목록 끝 미확인",

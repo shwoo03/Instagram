@@ -257,6 +257,53 @@
       return Object.freeze({ ok: true, detached: true, reason: session.lastReason });
     }
 
+    function isCurrentMetadata(session, metadata) {
+      return sessions.get(session.tabId) === session &&
+        session.attached &&
+        Boolean(session.runId) &&
+        metadata.runId === session.runId &&
+        metadata.profile === session.profile &&
+        metadata.captureSessionId === session.captureSessionId;
+    }
+
+    function reportBlockSignal(session, metadata, blockCode) {
+      const code = parser.sanitizeBlockCode(blockCode);
+      if (!code) return;
+      session.lastReason = "instagram-blocked";
+      emitStatus(session, "blocked", code, { httpStatus: metadata.status, blockCode: code });
+    }
+
+    function finishProcessing(session, requestId, metadata) {
+      if (session.processing.get(requestId) === metadata) session.processing.delete(requestId);
+      if (sessions.get(session.tabId) === session && session.attached && metadata.runId === session.runId) {
+        emitStatus(session, "progress", "capture-progress");
+      }
+    }
+
+    // 4xx 목록 응답은 경고 종류만 고정 코드로 분류하고 본문은 즉시 버린다.
+    async function processErrorBody(session, requestId, metadata) {
+      let body = "";
+      let base64Encoded = false;
+      try {
+        const result = await chromeApi.debugger.sendCommand(
+          { tabId: session.tabId },
+          "Network.getResponseBody",
+          { requestId }
+        );
+        body = result?.body || "";
+        base64Encoded = result?.base64Encoded === true;
+      } catch {
+        // 본문을 읽지 못하면 상태 코드만으로 판단한다.
+      }
+      try {
+        if (!isCurrentMetadata(session, metadata)) return;
+        reportBlockSignal(session, metadata, parser.classifyBlockResponse({ ...metadata, body, base64Encoded })?.code);
+        failedRequest(session, metadata, "http-response-failed");
+      } finally {
+        finishProcessing(session, requestId, metadata);
+      }
+    }
+
     async function processFinishedBody(session, requestId, metadata) {
       let failureReason = "response-body-unavailable";
       try {
@@ -265,20 +312,14 @@
           "Network.getResponseBody",
           { requestId }
         );
-        if (
-          sessions.get(session.tabId) !== session ||
-          !session.attached ||
-          !session.runId ||
-          metadata.runId !== session.runId ||
-          metadata.profile !== session.profile ||
-          metadata.captureSessionId !== session.captureSessionId
-        ) return;
+        if (!isCurrentMetadata(session, metadata)) return;
         const parsed = parser.parseResponse({
           ...metadata,
           body: result?.body || "",
           base64Encoded: result?.base64Encoded === true
         });
         if (!parsed?.ok) {
+          reportBlockSignal(session, metadata, parsed?.blockCode);
           failedRequest(session, metadata, parsed?.reason || "response-parse-failed");
           return;
         }
@@ -301,10 +342,7 @@
         if (sessions.get(session.tabId) !== session || !session.attached || metadata.runId !== session.runId) return;
         failedRequest(session, metadata, failureReason);
       } finally {
-        if (session.processing.get(requestId) === metadata) session.processing.delete(requestId);
-        if (sessions.get(session.tabId) === session && session.attached && metadata.runId === session.runId) {
-          emitStatus(session, "progress", "capture-progress");
-        }
+        finishProcessing(session, requestId, metadata);
       }
     }
 
@@ -325,14 +363,16 @@
           profile: session.profile,
           captureSessionId: session.captureSessionId
         };
-        if (!parser.isCandidateRequestMetadata(metadata)) return;
+        const clientError = metadata.status >= 400 && metadata.status < 500;
+        // 4xx 오류 본문은 HTML일 수 있으므로 경고 판정용으로 MIME 조건을 적용하지 않는다.
+        if (!parser.isCandidateRequestMetadata(clientError ? { ...metadata, mimeType: "" } : metadata)) return;
         metadata.mode = parser.detectMode(metadata.url);
         if (metadata.status === 429) {
           if (session.runId) emitStatus(session, "rate-limited", "rate-limited", { httpStatus: 429 });
           return;
         }
         if (!session.runId) return;
-        if (metadata.status < 200 || metadata.status >= 300) {
+        if ((metadata.status < 200 || metadata.status >= 300) && !clientError) {
           failedRequest(session, metadata, "http-response-failed");
           return;
         }
@@ -341,6 +381,7 @@
         session.seen.add(requestId);
         if (session.seen.size > 2048) session.seen.delete(session.seen.values().next().value);
         metadata.requestOrder = Number(params.response?.timing?.requestTime) || Number(params.timestamp) || ++session.sequence;
+        metadata.errorResponse = clientError;
         session.pending.set(requestId, metadata);
         cleanupPending(session);
         emitStatus(session, "progress", "capture-progress");
@@ -352,6 +393,11 @@
         const metadata = session.pending.get(requestId);
         if (!metadata) return;
         session.pending.delete(requestId);
+        if (metadata.errorResponse) {
+          reportBlockSignal(session, metadata, parser.classifyBlockResponse({ ...metadata, body: "" })?.code);
+          failedRequest(session, metadata, "http-response-failed");
+          return;
+        }
         failedRequest(session, metadata, "loading-failed");
         return;
       }
@@ -362,7 +408,9 @@
         if (!metadata) return;
         session.pending.delete(requestId);
         session.processing.set(requestId, metadata);
-        track(processFinishedBody(session, requestId, metadata));
+        track(metadata.errorResponse
+          ? processErrorBody(session, requestId, metadata)
+          : processFinishedBody(session, requestId, metadata));
       }
     }
 

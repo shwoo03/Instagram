@@ -10,6 +10,16 @@
   const CANDIDATE_URL_RE = /(graphql|friendships|followers|following|\/api\/v1\/|\/web\/friendships)/i;
   const JSON_MIME_RE = /(json|javascript|text\/plain)/i;
   const NETWORK_RESOURCE_TYPES = new Set(["xhr", "fetch"]);
+  const BLOCK_CODES = Object.freeze([
+    "checkpoint_required",
+    "feedback_required",
+    "login_required",
+    "please_wait",
+    "access_denied",
+    "blocked_page",
+    "unknown_warning"
+  ]);
+  const BLOCK_HINT_RE = /checkpoint|challenge|feedback|login_required|please wait|"spam"|"status"\s*:\s*"fail"/i;
 
   function isInstagramUrl(url) {
     try {
@@ -151,6 +161,67 @@
     return Object.freeze({ ok: false, reason, ...details });
   }
 
+  function sanitizeBlockCode(value) {
+    return BLOCK_CODES.includes(value) ? value : "";
+  }
+
+  // Instagram 경고 응답은 고정 코드로만 분류하고 원문 메시지/URL은 남기지 않는다.
+  function classifyBlockPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+    const message = String(payload.message || "").toLowerCase();
+    const errorType = String(payload.error_type || "").toLowerCase();
+    if (
+      /checkpoint|challenge/.test(message) ||
+      /checkpoint|challenge/.test(errorType) ||
+      typeof payload.checkpoint_url === "string" ||
+      (payload.challenge && typeof payload.challenge === "object")
+    ) {
+      return "checkpoint_required";
+    }
+    if (
+      message === "feedback_required" ||
+      errorType === "feedback_required" ||
+      payload.feedback_required === true ||
+      payload.spam === true
+    ) {
+      return "feedback_required";
+    }
+    if (message === "login_required" || errorType === "login_required") return "login_required";
+    if (message.includes("please wait a few minutes")) return "please_wait";
+    return "";
+  }
+
+  function classifyBlockResponse(input = {}) {
+    const url = String(input.url || "");
+    const status = Number(input.status || 0);
+    // 오류 응답은 HTML일 수 있으므로 MIME 대신 URL/리소스 종류만 확인한다.
+    if (!isCandidateRequestMetadata({ url, resourceType: input.resourceType })) return null;
+    if (status === 429) return null;
+
+    const success = status >= 200 && status < 300;
+    let code = "";
+    const decodedBody = decodeContent(input.body, {
+      encoding: input.encoding,
+      base64Encoded: input.base64Encoded
+    });
+    if (decodedBody && decodedBody.length <= MAX_BODY_CHARS && BLOCK_HINT_RE.test(decodedBody)) {
+      try {
+        const parsed = JSON.parse(decodedBody);
+        if (!success || String(parsed?.status || "").toLowerCase() === "fail") {
+          code = classifyBlockPayload(parsed);
+        }
+      } catch {
+        // JSON이 아닌 오류 본문은 아래 상태 코드 기준으로만 판단한다.
+      }
+    }
+
+    const mode = detectMode(url);
+    const exactEndpoint = mode === "followers" || mode === "following";
+    if (!code && exactEndpoint && status === 401) code = "login_required";
+    if (!code && exactEndpoint && status === 403) code = "access_denied";
+    return code ? Object.freeze({ code, status, mode: exactEndpoint ? mode : "active" }) : null;
+  }
+
   function parseResponse(input = {}) {
     const url = String(input.url || "");
     const status = Number(input.status || 0);
@@ -176,6 +247,8 @@
     if (decodedBody.length > MAX_BODY_CHARS) {
       return failure("body-too-large", { bodyLength: decodedBody.length });
     }
+    const block = classifyBlockResponse({ url, status, resourceType: input.resourceType, body: decodedBody });
+    if (block) return failure("instagram-block-signal", { blockCode: block.code });
     if (!looksLikeJsonUserPayload(decodedBody)) return failure("not-list-json");
 
     let parsed;
@@ -208,7 +281,9 @@
   }
 
   const namespace = Object.freeze({
+    BLOCK_CODES,
     MAX_BODY_CHARS,
+    classifyBlockResponse,
     collectUsernamesFromPayload,
     decodeContent,
     detectMode,
@@ -216,7 +291,8 @@
     getSafeEndpointLabelFromUrl,
     isCandidateRequestMetadata,
     isInstagramUrl,
-    parseResponse
+    parseResponse,
+    sanitizeBlockCode
   });
 
   Object.defineProperty(globalObject, "IGNetworkPayloadParser", {

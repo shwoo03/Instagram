@@ -133,28 +133,61 @@
     postToBackground("IG_DEVTOOLS_READY", { reason });
   }
 
-  function sendStatus(reason = "heartbeat", failedMode = "", failureReason = reason) {
+  function sendStatus(reason = "heartbeat", failedMode = "", failureReason = reason, extra = {}) {
     stats.statusSent++;
     postToBackground("IG_DEVTOOLS_STATUS", {
       reason,
       captureHealth: captureHealth(),
       failedMode,
       failureReason: failedMode ? failureReason : "",
-      error: stats.lastError || ""
+      error: stats.lastError || "",
+      ...extra
+    });
+  }
+
+  // Instagram 경고 응답은 고정 코드만 전달하고 본문은 보관하지 않는다.
+  function reportBlockSignal(code, url) {
+    const blockCode = parser?.sanitizeBlockCode(code);
+    if (!blockCode) return;
+    stats.lastError = "instagram-blocked";
+    console.log("[IG DevTools] Instagram warning response observed:", getSafeUrlLabel(url), blockCode);
+    sendStatus("instagram-blocked", "", "instagram-blocked", { blockCode });
+  }
+
+  function checkErrorResponseForBlock(request, status) {
+    const url = request?.request?.url || "";
+    const epoch = navigationEpoch;
+    request.getContent((content, encoding) => {
+      if (epoch !== navigationEpoch) return;
+      const block = parser?.classifyBlockResponse({
+        url,
+        status,
+        resourceType: request?._resourceType || request?.resourceType || "",
+        body: content || "",
+        encoding: encoding || ""
+      });
+      if (block) reportBlockSignal(block.code, url);
     });
   }
 
   function sendUsernamesToInspectedTab(request, body, encoding) {
     const url = request.request.url || "";
+    const status = request.response.status || 0;
+    const resourceType = request?._resourceType || request?.resourceType || "";
+    if (status >= 400 && status < 500) {
+      const block = parser?.classifyBlockResponse({ url, status, resourceType, body, encoding });
+      if (block) reportBlockSignal(block.code, url);
+    }
     const result = parser?.parseResponse({
       url,
-      status: request.response.status || 0,
+      status,
       mimeType: request.response.content?.mimeType || request.response.mimeType || "",
-      resourceType: request?._resourceType || request?.resourceType || "",
+      resourceType,
       body,
       encoding
     });
     if (!result?.ok) {
+      if (result?.blockCode) reportBlockSignal(result.blockCode, url);
       stats.ignored++;
       if (result?.reason === "body-too-large" || result?.reason === "base64-decode-failed") {
         stats.lastError = result.reason;
@@ -196,6 +229,13 @@
     }
 
     if (!isCandidateRequest(request)) {
+      // HTML 오류 페이지처럼 목록 후보가 아닌 4xx도 경고 신호인지 확인한다.
+      if (responseStatus >= 400 && responseStatus < 500 && parser?.isCandidateRequestMetadata({
+        url: requestUrl,
+        resourceType: request?._resourceType || request?.resourceType || ""
+      })) {
+        checkErrorResponseForBlock(request, responseStatus);
+      }
       stats.ignored++;
       return;
     }

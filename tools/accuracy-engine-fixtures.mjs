@@ -91,6 +91,36 @@ assert.deepEqual(plain(engine.extractPaginationEvidence({
 });
 
 assert.equal(engine.extractPaginationEvidence({ users: [], next_max_id: null }).paginationRecognized, false);
+assert.deepEqual(plain(engine.extractPaginationEvidence({
+  users: [{ username: 'one' }], big_list: true, page_size: 12, next_max_id: 'cursor'
+})), {
+  paginationRecognized: true, hasMore: true, terminal: false, terminalReason: 'next_max_id_present', itemCount: 1
+}, 'a v1 page with a next cursor is not the last page');
+assert.deepEqual(plain(engine.extractPaginationEvidence({
+  users: [{ username: 'one' }, { username: 'two' }], big_list: false, page_size: 12
+})), {
+  paginationRecognized: true, hasMore: false, terminal: true, terminalReason: 'next_max_id_absent', itemCount: 2
+}, 'a v1 page without a next cursor is the last page');
+assert.equal(engine.extractPaginationEvidence({
+  users: [{ username: 'one' }], page_size: 12, next_max_id: ''
+}).terminal, true, 'an empty cursor counts as absent');
+const conflictingCursor = engine.extractPaginationEvidence({
+  users: [{ username: 'one' }], big_list: true, page_size: 12, has_more: false, next_max_id: 'cursor'
+});
+assert.equal(conflictingCursor.terminal, false, 'has_more=false next to a live cursor must not end the list');
+assert.equal(conflictingCursor.terminalReason, 'conflicting_pagination_signals');
+assert.equal(engine.extractPaginationEvidence({ users: [{ username: 'one' }] }).paginationRecognized, false,
+  'a missing cursor alone is not enough without the friendships page shape');
+assert.equal(engine.extractPaginationEvidence({
+  users: [{ username: 'target' }], big_list: true, next_max_id: 'cursor',
+  suggestions: { users: [{ username: 'suggested' }], page_size: 3 }
+}).hasMore, true, 'nested suggestion lists cannot end the target list');
+{
+  const blocked = engine.assessListCompletion({
+    expectedCount: 3, confirmedCount: 3, debuggerExactPayloadCount: 1, endReason: 'instagram_blocked'
+  });
+  assert.deepEqual(plain(blocked.unsafeEndReasons), ['instagram_blocked']);
+}
 assert.equal(engine.extractPaginationEvidence({ profile: { has_more: false } }).paginationRecognized, false);
 assert.equal(engine.extractPaginationEvidence({
   users: [{ username: 'target' }],
@@ -151,6 +181,31 @@ const terminalSmallGap = engine.assessListCompletion({
   nonDomCandidateCount: 0
 });
 assert.equal(terminalSmallGap.state, 'CONFIRMED_NETWORK_END');
+
+// Live 2026-09-25 shape: displayed 284, list API returned 285 unique users and ended with no cursor.
+const overcountBase = {
+  expectedCount: engine.parseDisplayedCount({ text: '284', source: 'aria-label' }),
+  confirmedCount: 285,
+  debuggerConnected: true,
+  debuggerExactPayloadCount: 25,
+  domEndObserved: true,
+  endReason: 'target_reached'
+};
+const terminalOvercount = engine.assessListCompletion({ ...overcountBase, pagination: { paginationRecognized: true, terminal: true } });
+assert.equal(terminalOvercount.state, 'CONFIRMED_NETWORK_END');
+assert(terminalOvercount.reasons.includes('displayed_count_below_network_list'));
+assert.equal(engine.assessListCompletion({ ...overcountBase, pagination: { paginationRecognized: true, terminal: false } }).state, 'PARTIAL',
+  'an overcount without a proven last page stays partial');
+assert.equal(engine.assessListCompletion({ ...overcountBase, confirmedCount: 290, pagination: { paginationRecognized: true, terminal: true } }).state, 'PARTIAL',
+  'an overcount beyond the tolerance stays partial');
+assert.equal(engine.assessListCompletion({ ...overcountBase, capturePendingCount: 1, pagination: { paginationRecognized: true, terminal: true } }).state, 'PARTIAL');
+assert.equal(engine.assessListCompletion({ ...overcountBase, endReason: 'instagram_blocked', pagination: { paginationRecognized: true, terminal: true } }).state, 'PARTIAL');
+assert.deepEqual(plain(engine.extractPaginationEvidence({
+  users: Array.from({ length: 10 }, (_, index) => ({ username: `u${index}` })),
+  big_list: false, page_size: 12, has_more: false, groups: [], status: 'ok'
+})), {
+  paginationRecognized: true, hasMore: false, terminal: true, terminalReason: 'has_more_false', itemCount: 10
+}, 'live last page (no cursor, has_more=false) is terminal');
 
 const unprovenSmallGap = engine.assessListCompletion({
   expectedCount: exactCount,

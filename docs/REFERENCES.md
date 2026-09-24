@@ -1,5 +1,19 @@
 # References
 
+## Live overcount follow-up — 2026-09-25
+
+- Live observation, owner-authorized: followers endpoint pages include `has_more` and `next_max_id`; last page lacks the cursor with `has_more: false`. 285 unique listed vs 284 displayed after reload. Decision: accept a small overcount only with exact CDP evidence and proven terminal pagination; larger or unproven overcounts stay partial. Recheck if Instagram changes the page shape or the gap grows.
+
+## Warning stop, list-end cursor, native input and pacing — 2026-09-24
+
+- Owner selection: after the 2026-09-24 research report, the owner selected four items: non-429 warning stop, `next_max_id` list end with early exit, synthetic event removal, and response-arrival pacing. Not selected: run cooldown and official export import.
+- Web endpoint shape (unofficial, [gist](https://gist.github.com/abir-taheer/0d3f1313def5eec6b78399c0fb69e4b1)): `/api/v1/friendships/{id}/followers|following/` responses carry `users`, `big_list`, `page_size`, `next_max_id`. Decision: adopt cursor presence/absence as pagination evidence only with that page shape; a live cursor overrides nothing but makes `has_more: false` conflicting. Recheck with a live response.
+- Warning signals ([Instagram Help](https://help.instagram.com/740480200552298/), [online-tech-tips](https://www.online-tech-tips.com/how-to-fix-we-limit-how-often-you-can-do-certain-things-on-instagram-error/)): `feedback_required` / "Try Again Later", checkpoint/challenge and "Please wait a few minutes" can escalate if repeated. Decision: stop without retry, keep 429 on the existing backoff path. Body classification uses fixed codes; raw messages/URLs are never relayed.
+- Rate limits: Meta publishes none for these web endpoints; the "200 calls/hour" figure is Graph API only ([Phyllo 2026](https://www.getphyllo.com/post/instagram-api-rate-limits-explained-and-how-to-scale-beyond-them-2026)). [Instaloader troubleshooting](https://instaloader.github.io/troubleshooting.html) advises single-client use and waiting out 429s. Decision: 1.5s minimum after each page is a conservative starting value, recorded in diagnostics for tuning; not a published limit.
+- Synthetic events: script-dispatched events carry `isTrusted=false` and are distinguishable by page scripts ([DOM Standard](https://dom.spec.whatwg.org/#dom-event-istrusted)). Decision: remove them rather than disguise input; no CDP `Input` domain, fingerprint or stealth technique was adopted.
+- Official alternatives: Basic Display API ended 2024-12-04 ([Meta](https://developers.facebook.com/blog/post/2024/09/04/update-on-instagram-basic-display-api/)); Graph API exposes only counts. The account-data export (`connections/followers_and_following/`) is the only official list source — deferred.
+- Verification and rollback: latest `HANDOFF.md` entry.
+
 ## Account lookup and result explanations — 2026-09-21
 
 - Owner selection: “ㄱㄱ” after the recommendation to implement next items 1–3 (unified lookup, completion evidence cards, popup diagnostic copy). This is separate from the preceding progress/429 diagnostics bundle.

@@ -6,6 +6,7 @@ const read = (name) => fs.readFileSync(new URL(`../${name}`, import.meta.url), '
 const context = vm.createContext({});
 vm.runInContext(read('run-diagnostics.js'), context);
 vm.runInContext(read('result-insights.js'), context);
+vm.runInContext(read('network-payload-parser.js'), context);
 const diagnostics = context.IGRunDiagnostics;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -57,7 +58,8 @@ Object.assign(context, {
   recordRunEvent() {}, console: { log() {} }
 });
 vm.runInContext(`${collector.slice(0, collector.indexOf('    function isVerboseLogging('))}
-globalThis.progressFixture = { state, buildRunProgress, registerRateLimitSignal, cancel: () => { cancellationRequested = true; } }; }`, context);
+globalThis.progressFixture = { state, buildRunProgress, registerRateLimitSignal, registerInstagramBlockSignal, pendingWaits,
+  isCancelled: () => cancellationRequested, cancel: () => { cancellationRequested = true; } }; }`, context);
 const { state, buildRunProgress } = context.progressFixture;
 state.rateLimit = input.rateLimit;
 state.captureHealth.debugger.followers = { failedCount: 1, failureReasons: { body_unavailable: 1 } };
@@ -74,12 +76,25 @@ assert.deepEqual(plain(health.followers.failureReasons), { invalid_payload: 1 })
 const relay = context.buildRelayPayload({ type: 'IG_DEVTOOLS_STATUS', failedMode: 'followers', failureReason: 'invalid-json' });
 assert.equal(relay.failureReason, 'invalid_payload');
 assert.equal(relay.failedMode, 'followers');
+const blockRelay = context.buildRelayPayload({ type: 'IG_DEVTOOLS_STATUS', reason: 'instagram-blocked', blockCode: 'checkpoint_required' });
+assert.equal(blockRelay.blockCode, 'checkpoint_required');
+assert.equal(context.buildRelayPayload({ type: 'IG_DEVTOOLS_STATUS', blockCode: 'raw private text' }).blockCode, '', 'block codes are allowlisted');
 state.rateLimit = { count: 0, lastDetectedAtMs: 0, pausedUntilMs: 0 };
 context.progressFixture.registerRateLimitSignal('devtools');
 assert.equal(progressMessages.length, 1, '429 publishes immediately, even before another scroll tick');
 assert.equal(progressMessages[0].progress.diagnostics.rateLimit.count, 1);
 context.progressFixture.registerRateLimitSignal('debugger');
 assert.equal(progressMessages.length, 1, 'duplicate 429 observations do not extend the pause');
+const cancelledWaits = [];
+context.progressFixture.pendingWaits.add(() => cancelledWaits.push('wait'));
+context.progressFixture.registerInstagramBlockSignal('feedback_required', 'debugger-network');
+assert.equal(state.instagramBlock.code, 'feedback_required');
+assert.equal(state.instagramBlock.origin, 'debugger-network');
+assert.equal(state.lastScrollEndReason, 'instagram_blocked');
+assert.equal(context.progressFixture.isCancelled(), true, 'a block signal stops the run through the cancellation path');
+assert.deepEqual(cancelledWaits, ['wait'], 'pending waits are interrupted immediately');
+context.progressFixture.registerInstagramBlockSignal('checkpoint_required', 'devtools');
+assert.equal(state.instagramBlock.code, 'feedback_required', 'later block signals do not overwrite the first');
 context.progressFixture.cancel();
 state.rateLimit.lastDetectedAtMs = 0;
 context.progressFixture.registerRateLimitSignal('devtools');

@@ -1,5 +1,136 @@
 # Handoff
 
+## Live overcount follow-up — 2026-09-25
+
+The owner's first live run after the 2026-09-24 changes finished with
+following `CONFIRMED_EXACT_COUNT` (285/285) but followers `PARTIAL`
+(`safe_completion_not_proven`): displayed 284, exact Debugger evidence 285,
+no pending/failed capture, no 429.
+
+Live observation (owner-authorized, via the owner's logged-in Chrome, page-only
+read hook, no raw bodies saved): the followers endpoint returned 25 pages,
+285 unique usernames. Pages carry `users`, `big_list`, `page_size: 12`,
+`next_max_id`, `groups`, `has_more`, `should_limit_list_of_followers` and
+`status`; the last page had 10 users, no `next_max_id`, `has_more: false`,
+`big_list: false`. The profile still showed 284 after reload. Conclusion: the
+list is complete and Instagram's counter is one lower than its list API.
+The old rule had no confirmed state for confirmed > displayed.
+
+- `accuracy-engine.js`: confirmed count above the displayed count by at most
+  the existing 5-account tolerance becomes `CONFIRMED_NETWORK_END` only with
+  exact CDP evidence, proven terminal pagination, DOM end, and no pending/failed
+  capture or unsafe end (reason `displayed_count_below_network_list`).
+- `main.js`: once strict capture is delivering and pagination is recognized,
+  reaching the displayed count no longer stops scrolling until the network last
+  page is seen (protects against a too-low counter). Overcount runs now carry
+  their completion summary and a Korean info warning. Fixed min-interval stats
+  treating a real 0ms interval as unset.
+- `result-insights.js`: Korean label for the new reason code.
+- Also observed: in a background tab (`visibilityState: hidden`) Instagram does
+  not load further pages, so collection stalls if the operator switches tabs.
+  Not changed yet.
+
+Checks: `npm test`, `npm run e2e`, `npm run e2e:capture`, `npm run ui:e2e`
+passed (exit 0); `git diff --check` passed. Local reproduction with the
+fixture's displayed count one below the list: HEAD `PARTIAL` → worktree
+`CONFIRMED` (`CONFIRMED_NETWORK_END` both lists). The local fixture fires a
+request per scroll event, so its interval stats are not representative. The
+fixed live run itself was not re-run after the fix; next step is one live
+comparison. Independent review remains **blocked/unreviewed** (completion
+contract change). Updated hashes for the files changed in this follow-up:
+
+```text
+ba2c02615d5accb269b3e1d753fa3cd920588215dd738fb342f8ca3a391e7fb3  accuracy-engine.js
+80ad0ee0ad3d0b52c40b176326015e8620a07936d983efd7ecf2d87aa769ae18  main.js
+3ea30862ff64fc6b58152ac68dad019cfc9fcadf67803b2a056c0959d162cdeb  result-insights.js
+9c48007ab7544995a01b490284c38abed31e5bd5d5b11ac5f5ca3e66d70177b1  tools/accuracy-engine-fixtures.mjs
+```
+
+Other files keep the 2026-09-24 snapshot hashes below.
+
+## Warning stop, list-end cursor, native scrolling and response pacing — 2026-09-24
+
+The owner selected four items from the 2026-09-24 research report: stop on
+non-429 Instagram warnings, recognize `next_max_id` as the list-end signal and
+exit scrolling early, remove synthetic wheel/key/mouse events, and scroll by
+response arrival with a minimum interval. All four are implemented.
+
+- Warning stop: `network-payload-parser.js` classifies 4xx list responses and
+  `status: "fail"` 2xx bodies into fixed codes (`checkpoint_required`,
+  `feedback_required`, `login_required`, `please_wait`, `access_denied`);
+  `main.js` also treats `/challenge/`, `/checkpoint/` and
+  `/accounts/login|suspended|disabled` paths as `blocked_page`. Debugger and
+  DevTools relay only the allowlisted code. `main.js` stops through the
+  existing cancellation path (no retry), saves the partial result as
+  `partial_instagram_blocked`, and shows the `Instagram 경고 감지 · 부분 결과`
+  verdict. `instagram_blocked` is an unsafe end reason in `accuracy-engine.js`.
+  429 keeps its existing pause/backoff path.
+- List end: `extractPaginationEvidence` records `next_max_id` present as
+  `hasMore: true` and, only for v1 pages with `users` plus `big_list` or
+  `page_size`, a missing/empty cursor as terminal. `has_more: false` next to a
+  live cursor now becomes conflicting, not terminal. `scrollUntilEnd` exits
+  after 2 stable ticks when strict network pagination is terminal, no capture
+  is pending, the last row is visible, no recovery ran and the strict count is
+  within the existing 5-account tolerance. The end reason stays
+  `stalled_at_list_end`; completion rules are unchanged.
+- Native input: `humanLikeElementClick`, the wheel and PageDown dispatches are
+  removed; clicks use `element.click()`. The last-resort modal close uses
+  `history.back()` only on this run's `/<profile>/followers|following/` path
+  instead of a synthetic Escape key.
+- Pacing: once strict capture has delivered the list's first page, each scroll
+  waits until 1.5s (+0–0.5s) after the previous page arrived; near the bottom it
+  waits up to 4s for the next page. Other scroll sites (stall nudge, recovery,
+  re-check) respect the same interval. Per-list page count, average/minimum
+  interval and wait timeouts go to the debug report and a Korean console line.
+  The 1.5s value is a starting guess, not an Instagram-published limit.
+
+Checks on 2026-09-24:
+
+- `npm test`: passed, including new fixtures for cursor terminal/conflict,
+  warning classification (no false positive on list bodies), debugger 4xx body
+  read/discard, DevTools warning relay, allowlisted relay codes and immediate
+  cancellation on a warning.
+- `npm run e2e` (six scenarios), `npm run e2e:capture` and `npm run ui:e2e`:
+  passed with exit code 0.
+- Scratch comparison on the local capture fixture (not committed): standard
+  run 13.9s → 13.0s; displayed-count-gap run 48.5s → 23.5s with the same
+  `CONFIRMED_NETWORK_END` result. Early exit fired for both lists; page
+  intervals averaged 2.15s/1.95s (minimum 1.76s) with no wait timeouts.
+- `git diff --check`: passed. No manifest, permission or dependency change.
+- Not verified: real Instagram response shapes (whether v1 pages carry
+  `has_more`, the real page size), real warning bodies, and live timing. Local
+  fixtures do not prove Instagram behavior.
+- Independent review: **blocked/unreviewed** under `docs/CHANGE_REVIEW.md`
+  (shared relay message gains `blockCode`; collection/stop contract changes).
+  No reviewer was started; author checks are not independent review.
+- To use: reload the unpacked extension and the Instagram tab. After a real
+  run, check the `📶` console line and `window.__igFollowerDebugReport.networkPacing`
+  before tuning `NETWORK_PAGE_MIN_INTERVAL_MS`.
+
+### Fixed review snapshot
+
+Base: `main`, `4133b60578c8e61e9fee402b54165e05218acae4`. Review these files'
+diffs against the base; existing dirty kit docs/instructions are out of scope.
+
+```text
+0b4da22302b14b032d079558039adc6c453ae505b4b031c2f46884bd14535f1a  accuracy-engine.js
+fe93b384813f93251486bd1bef19c913595498a577ccd00ce4aff16d569869b1  background.js
+2a50360e075457cd4a5c1b613f6ddab4f85a0506c2a0ffea30dbdb80050b5e5c  debugger-capture.js
+dac31c11218afc6755e659e413c9c101308924c05fd9554f1e30402623bfd4cd  devtools.js
+7cf366e74b0bdaaa910b59de539ebd3b8605e6c9bb4422278d67a25a2a511175  main.js
+4f3a11333051b4a60f78126158fe8ac865819e3d093f34320cb5b2898b2ca72b  network-payload-parser.js
+58d5ea77c40570288b337affe64a615da920f1907d59843245ccfd1b2354a8df  run-diagnostics.js
+af12dfdef357a8f0f8dcdb1f100cb0043d3803b5f153461d6d0be926f4ff8335  tools/accuracy-engine-fixtures.mjs
+a0d822a1363ea8956d1cc0ae6e5c1c7ff9f69647a712f9a5d61495de336c43c0  tools/debugger-capture-fixtures.mjs
+297ac95f2cdbee393453877773c8f23054da0724ceb775f3b96297094b549ef7  tools/devtools-capture-fixtures.mjs
+abd2dc0ed24228e24691ab3cc0a12c0423ecf544ca4200619ece681e19192cc9  tools/network-payload-parser-fixtures.mjs
+953b4a788bc0ebeb487f83e6980ad5eb0e0cb341be67f065cea3e3ec8d374479  tools/run-diagnostics-fixtures.mjs
+```
+
+Rollback: revert only these files' hunks plus this entry and the matching
+2026-09-24 sections in `BACKLOG.md`, `REFERENCES.md` and `SECURITY.md`, after
+checking for drift. Never reset the whole dirty worktree.
+
 ## Account lookup and result explanations — 2026-09-21
 
 The owner's next “ㄱㄱ” selected unified account lookup, completion evidence

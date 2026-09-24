@@ -128,4 +128,36 @@ assert.equal(parser.parseResponse({
   body: `{"users":[],"padding":"${'x'.repeat(parser.MAX_BODY_CHARS)}"}`
 }).reason, 'body-too-large');
 
+const followersUrl = 'https://www.instagram.com/api/v1/friendships/1/followers/?count=12';
+const classify = (status, body, url = followersUrl) => parser.classifyBlockResponse({ url, status, resourceType: 'XHR', body })?.code || '';
+assert.equal(classify(400, JSON.stringify({ message: 'checkpoint_required', checkpoint_url: '/challenge/x', status: 'fail' })), 'checkpoint_required');
+assert.equal(classify(400, JSON.stringify({ message: 'challenge_required', challenge: { url: 'x' }, status: 'fail' })), 'checkpoint_required');
+assert.equal(classify(400, JSON.stringify({ message: 'feedback_required', spam: true, feedback_title: 'Try Again Later', status: 'fail' })), 'feedback_required');
+assert.equal(classify(403, JSON.stringify({ message: 'login_required', status: 'fail' })), 'login_required');
+assert.equal(classify(401, JSON.stringify({ message: 'Please wait a few minutes before you try again.', status: 'fail' })), 'please_wait');
+assert.equal(classify(401, '<html>login</html>'), 'login_required', 'exact list 401 without JSON is a login signal');
+assert.equal(classify(403, ''), 'access_denied');
+assert.equal(classify(403, '', 'https://www.instagram.com/graphql/query'), '', 'status-only fallback is limited to exact list endpoints');
+assert.equal(classify(429, JSON.stringify({ message: 'Please wait a few minutes before you try again.' })), '', '429 stays on the rate-limit path');
+assert.equal(classify(404, JSON.stringify({ message: 'not found', status: 'fail' })), '');
+assert.equal(classify(400, JSON.stringify({ message: 'checkpoint_required' }), 'https://example.com/api/v1/friendships/1/followers/'), '');
+assert.equal(classify(200, JSON.stringify({ users: [{ username: 'challenge_fan' }], message: 'challenge', status: 'ok' })), '',
+  'successful list responses are never classified from account names or messages');
+assert.equal(parser.sanitizeBlockCode('checkpoint_required'), 'checkpoint_required');
+assert.equal(parser.sanitizeBlockCode('raw message'), '');
+const failedSuccess = parser.parseResponse({
+  url: followersUrl, status: 200, mimeType: 'application/json', resourceType: 'XHR',
+  body: JSON.stringify({ message: 'feedback_required', spam: true, status: 'fail' })
+});
+assert.equal(failedSuccess.ok, false);
+assert.equal(failedSuccess.reason, 'instagram-block-signal');
+assert.equal(failedSuccess.blockCode, 'feedback_required');
+assert.equal(JSON.stringify(failedSuccess).includes('spam'), false, 'raw warning text is not returned');
+const listWithChallengeName = parser.parseResponse({
+  url: followersUrl, status: 200, mimeType: 'application/json', resourceType: 'XHR',
+  body: JSON.stringify({ users: [{ username: 'checkpoint.challenge' }], big_list: false, page_size: 12, status: 'ok' })
+});
+assert.equal(listWithChallengeName.ok, true);
+assert.equal(listWithChallengeName.evidence.pagination.terminal, true);
+
 console.log('network payload parser fixtures passed');

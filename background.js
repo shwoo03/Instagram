@@ -228,6 +228,28 @@ function compactSnapshot(value) {
   };
 }
 
+function sanitizeInstagramBlock(value) {
+  if (!value || typeof value !== "object") return null;
+  const code = globalThis.IGNetworkPayloadParser.sanitizeBlockCode(value.code);
+  if (!code) return null;
+  return {
+    code,
+    origin: ["debugger-network", "devtools", "page-location"].includes(value.origin) ? value.origin : "unknown",
+    detectedAt: String(value.detectedAt || "").slice(0, 40)
+  };
+}
+
+function sanitizeNetworkPacing(value) {
+  if (!value || typeof value !== "object") return null;
+  return Object.fromEntries(["followers", "following"].map((mode) => [mode, {
+    pageCount: getSafeNonNegativeInteger(value[mode]?.pageCount),
+    avgIntervalMs: getSafeNonNegativeInteger(value[mode]?.avgIntervalMs),
+    minIntervalMs: getSafeNonNegativeInteger(value[mode]?.minIntervalMs),
+    waitTimeouts: getSafeNonNegativeInteger(value[mode]?.waitTimeouts),
+    minIntervalSettingMs: getSafeNonNegativeInteger(value[mode]?.minIntervalSettingMs)
+  }]));
+}
+
 function compactDebugReport(value) {
   if (!value || typeof value !== "object") return null;
   return {
@@ -238,6 +260,8 @@ function compactDebugReport(value) {
     followActionEnabled: Boolean(value.followActionEnabled),
     finalDiffPolicy: value.finalDiffPolicy || "",
     rateLimit: value.rateLimit || null,
+    instagramBlock: sanitizeInstagramBlock(value.instagramBlock),
+    networkPacing: sanitizeNetworkPacing(value.networkPacing),
     overallReliability: value.overallReliability || "",
     trustVerdict: value.trustVerdict || null,
     completion: value.completion || null,
@@ -567,6 +591,7 @@ function relayDebuggerStatus(status) {
     reason: String(status.reason || "unknown").slice(0, 100),
     error: String(status.error || "").slice(0, 120),
     httpStatus: getSafeNonNegativeInteger(status.httpStatus),
+    blockCode: globalThis.IGNetworkPayloadParser.sanitizeBlockCode(status.blockCode),
     listHealth: sanitizeCaptureHealth(status.listHealth),
     capturedAt: status.capturedAt || new Date().toISOString()
   })?.catch(() => {});
@@ -651,6 +676,7 @@ function buildRelayPayload(message) {
       captureHealth: sanitizeCaptureHealth(message.captureHealth),
       failedMode: ["followers", "following"].includes(message.failedMode) ? message.failedMode : "",
       failureReason: globalThis.IGRunDiagnostics.failureCode(message.failureReason || message.reason),
+      blockCode: globalThis.IGNetworkPayloadParser.sanitizeBlockCode(message.blockCode),
       error: message.error || "",
       capturedAt: message.capturedAt || new Date().toISOString()
     };
