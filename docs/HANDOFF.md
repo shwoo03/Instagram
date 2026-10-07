@@ -253,6 +253,31 @@ under `docs/SECURITY.md` Storage Policy. Review those additions only; other dirt
 documentation predates this task. Roll back only the selected implementation
 diff and these additions after checking for drift, never the whole worktree.
 
+## Remaining-work follow-up — 2026-09-19
+
+The requested remaining documentation is applied. R-12 now links `AGENTS.md`
+to `docs/CHANGE_REVIEW.md`; all R-01–R-15 have been applied within their selected
+documentation scope. This does not mean independent review or live Instagram
+compatibility has passed. The earlier batch entry below is historical.
+
+- Recheck: source HEAD and all 347 recorded entries matched `kit-baseline.json`; target HEAD and all 208 entries matched `post-batch.json` before edits. Existing dirty work and all product HOLD/deferred work were preserved.
+- New checks: `npm test` passed; `npm run e2e` passed all six scenarios (114.8s); `npm run e2e:capture` passed popup/capture/compare/storage, cancellation with partial preservation, stale/late response rejection, restart/detach and navigation cleanup (45.2s); `npm run ui:e2e` passed six widths from 320–1,024px plus stale-profile cases (4.9s). These used synthetic local pages and disposable browser profiles. Popup search and panel stop screenshots were visually inspected.
+- Provenance: read-only remote check found kit origin HEAD/main at `7fdda0c1db8cc571dc40a366fe9afe44a644a448`, two commits behind local source. Notion skill copies match local commit `d807f78d33374454de40fece29178161296f4c5c`; external upstream remains unknown. No source/remote changes or skill installs.
+- Blocked/unreviewed: separate reviewer and fresh-session behavior trials did not run. The Codex CLI 0.154.0 sandbox probe blocked loopback networking but unexpectedly allowed a denied synthetic file read and a write in the declared read-only directory. See `docs/SECURITY.md`; do not treat this as an enforced review boundary. Static R-12 scenarios do not substitute for a fresh reviewer.
+- Live Instagram check is blocked: computer-use inventory had no connected browser and reported `Sky Computer Use native pipe startup failed`; selecting Chrome failed likewise. The separate DevTools automation browser exposed only `about:blank`. No logged-in profile or live account was accessed. The user was asked to reconnect Chrome; pending that input, normal live comparison and manual stop remain unverified.
+- Next: reconnect the logged-in Chrome tab for the two live checks; establish and harmlessly test a supported restricted reviewer environment, or obtain human review of the fixed selected diff. Do not widen permissions to force a review. User/organization owns that environment; Notion upstream identification remains an operator provenance task.
+- Evidence, rollback and remaining limits: latest follow-up in `docs/REFERENCES.md`; temporary logs/backups under `/private/tmp/instagram-kit-review-4snbwf_j/remaining/`. Runtime, manifest, dependencies, tests, persistent tool settings, old user changes and product deferrals are unchanged. No commit or push.
+
+## Kit refresh handoff — 2026-09-19
+
+- Request: apply as much of the reviewed kit guidance as possible with minimal project impact. Selected R-01–R-11 and R-13–R-15; R-12 remains deferred. Exact paths, source hashes and rollback are in `docs/REFERENCES.md`.
+- Base: `main` / `c022f649f6a9a05a3b001d61fb5cf5d7b5d6d0e0`. Both repositories matched the 2026-09-18 comparison before edits. Source HEAD is `e25d4a0d9a11504aa6588333cbaf397e6838266a` plus nine dirty paths, so the refresh remains partial/provisional.
+- Changed scope: existing project docs, accuracy skill, six advisory role documents, `.gitignore`, and new `docs/UI_QUALITY.md`. Runtime/manifest/dependencies and existing user additions remain preserved; no tools, hooks, MCP, workers, browser runs, commit or push were added.
+- Checks before/after: `npm test` and `git diff --check` passed. The kit `--applied` record checker improved from 24 issues to 0, retaining explicit unknowns. The existing `/opt/anaconda3/bin/python` ran `skill-creator/scripts/quick_validate.py` successfully; the initial `python3` attempt lacked PyYAML, and nothing was installed. Local links, ignore exceptions, unchanged skill trigger, preserved user blocks/history, and selected-path boundaries were checked. All 14 selected items have scoped static/local verification, not live agent or Instagram validation.
+- Evidence limits: no fresh Instagram run, browser suite, new-session behavior trial, independent review or host-denial trial. Host unknowns are disclosed in `docs/SECURITY.md`; Notion skill upstream and remote kit freshness remain unknown.
+- Next action: use `START_HERE.md` and `npm test` for the next scoped development task. The product's separate operator check remains a normal comparison and manual stop against live Instagram after reload; this docs refresh does not authorize or perform it.
+- Keep on hold: partial-side recollection/recovery, download/import, side panel/persistent history, broad module extraction and CI. Do not truncate the product handoff/history below or promote dated checks to fresh live evidence.
+
 ## Current handoff — 2026-09-18, v1.8.0
 
 The popup and DevTools panel now let the user stop collection and retain a clearly marked partial result. Saved account lists support username search and distinguish the full result count from the stored subset. Session storage removes older profile results when capacity is needed.

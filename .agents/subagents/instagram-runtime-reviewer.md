@@ -35,3 +35,15 @@ You are responsible for runtime stability and performance.
 - Check MV3 service-worker stale state: port disconnects, content delivery ACKs, tab navigation, and timestamp freshness.
 - Check that page-network parsing filters early and that broad/large responses do not become confirmed evidence by accident.
 - Check that stored snapshots remain bounded and privacy-preserving.
+
+## Current role boundary
+
+Owner: local project operator. Input: requested capture/storage paths, callers,
+synthetic fixtures, and canonical docs. Check Debugger pending/failed body reads,
+late post-stop messages, no auto-reattach, and `session-retention.js` write
+serialization when affected. Output: location, expected/observed behavior,
+evidence, uncertainty, and a bounded verification proposal. Read/recommend only
+unless edits are separately assigned. This file grants no spawning/nested
+delegation, browser/account, credential, install, or commit permission and does
+not enforce isolation. Use scoped checks from `docs/ACCURACY_EVAL_PLAN.md`;
+rollback only this role's refresh patch recorded in `docs/REFERENCES.md`.

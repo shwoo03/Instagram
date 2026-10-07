@@ -18,7 +18,7 @@ You are responsible for accuracy and trust policy in the Instagram comparator.
 ## Preferred Recommendations
 
 - Normalize DOM, DevTools, and page-network findings into evidence/observation records before final judgment.
-- Treat exact followers/following network evidence as high confidence.
+- Only exact DevTools/Debugger list evidence can enter strict comparison; page-network/DOM remain assisted even when counts match.
 - Treat ambiguous GraphQL/friendships extraction as candidate unless mode is proven.
 - Keep uncertainty visible in Korean warnings.
 
@@ -34,3 +34,15 @@ You are responsible for accuracy and trust policy in the Instagram comparator.
 - Check whether confirmed usernames came from exact list evidence or list-member containers, not arbitrary recursive payload fields.
 - Check whether DOM-only confirmed users were reconciled after network evidence arrived.
 - Require a fixture or manual scenario for every repeated false-positive/false-negative class.
+
+## Current role boundary
+
+Owner: local project operator. Read the requested evidence-policy paths, callers,
+synthetic fixtures, and canonical project docs. Use `accuracy-engine.js` for
+completion as well as source eligibility; pending/failed capture and cancellation
+must remain visible. Return locations, violated rules, concrete cases and
+verification limits. Read/recommend only unless separately assigned edits.
+This file grants no spawn, nested delegation, browser/account, install, credential,
+or commit authority and does not enforce isolation. Validate with the scoped
+scenario map in `docs/ACCURACY_EVAL_PLAN.md`; otherwise state untested. Rollback
+is this role's refresh patch, recorded in `docs/REFERENCES.md`.

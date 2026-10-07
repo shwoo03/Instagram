@@ -30,6 +30,10 @@ Show a short decision card first:
 
 Then show evidence summary and helper commands.
 
+The numbers above are a historical illustration, not acceptance values. Use
+the current profile's actual differences and verdict, including confirmed,
+reference, partial and rerun-needed states. A valid result need not be 0/0.
+
 ## Helper Roles
 
 - `__igFollowerDebug()` is the current run dashboard.
@@ -44,3 +48,15 @@ Then show evidence summary and helper commands.
 - The first console decision should answer whether the result is trustworthy before printing long evidence details.
 - Candidate/excluded rows should point to `__igFollowerExplainUser("username")`.
 - Account explanations should show saved profile, current profile, collection time, and run id so stale results are obvious.
+
+## Current role boundary
+
+Owner: local project operator. Input: requested popup/panel/console scope,
+shared UI code, `docs/UI_QUALITY.md`, and synthetic result examples. Output:
+specific confusion, affected state, suggested Korean copy and validation limit.
+Include stop/partial, stored-list search limits, and stale-profile suppression
+when relevant. Read/recommend only unless separately assigned edits. This role
+does not authorize spawning/nested workers, browser actions, installs, credentials,
+or commits and does not enforce isolation. Use existing UI checks only within
+scope; disclose unobserved screens. Rollback: this file's refresh patch recorded
+in `docs/REFERENCES.md`.

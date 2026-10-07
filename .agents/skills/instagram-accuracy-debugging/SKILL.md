@@ -25,12 +25,14 @@ Use this skill for `/Users/shwoo/mydir/Instagram`, a Chrome MV3 extension that c
 
 Use this evidence order:
 
-1. DevTools exact followers/following endpoint evidence.
-2. Page network exact followers/following endpoint evidence.
-3. DOM row evidence from a clearly identified followers/following modal.
-4. Candidate-only network evidence from active/ambiguous mode.
+1. DevTools or run-scoped Debugger exact followers/following evidence: eligible for strict comparison.
+2. Page-network exact evidence: assisted preview only.
+3. DOM row evidence from an identified list: assisted preview or diagnostics only.
+4. Candidate-only network evidence from active/ambiguous mode: excluded from strict comparison.
 
-Final diff should use confirmed users only. Candidate users belong in a separate warning/debug section.
+Final strict diff uses exact DevTools/Debugger users only. A matching count does
+not upgrade page-network/DOM evidence. Completion also requires the safeguards
+in `accuracy-engine.js`; candidate users stay in a separate warning/debug section.
 
 ## Debugging Workflow
 
@@ -53,25 +55,38 @@ When a result looks wrong:
 
 ## 2026-06-06 Runtime Policy Addendum
 
-- Begin every accuracy investigation with preflight status: DevTools bridge, page-network bridge, DOM counts, expected counts, and final compare policy.
-- Status priority is `DEVTOOLS_ASSISTED` > `PAGE_NETWORK_ASSISTED` > `DOM_PREVIEW`.
-- `PAGE_NETWORK_ASSISTED` may be auto-enabled when DevTools is not connected. Treat it as useful evidence, but not identical to DevTools Network capture.
-- `DOM_PREVIEW` means there was no confirmed DevTools or page-network payload. Do not present those results as final high-confidence truth.
+- Begin every accuracy investigation with DevTools/Debugger payloads and pending/failure counts, page-network state, DOM counts, expected counts, run/profile freshness, and final compare policy.
+- Current policy supersedes the historical auto-assist order: fresh DevTools first, otherwise run-scoped Debugger; page-network/DOM stay assisted.
+- `PAGE_NETWORK_AUTO_ASSIST_ENABLED` remains false. Do not enable it just because DevTools is absent.
+- Readiness and preview labels do not prove exact payload capture or completeness. Use `accuracy-engine.js` classifications before interpreting display aliases.
 - For final diff, use confirmed compare sets. If raw DOM exceeds expected UI counts, keep low-confidence DOM-only users in `excludedFromCompare` and explain them with `window.__igFollowerExplainUser("username")`.
 
 ## 2026-06-06 Regression Guardrails
 
 - Never solve false positives by hard-coding usernames. `haeunieii` and `zerowonil` were examples of DOM-only candidates, not special-case accounts.
-- If confirmed DevTools/page-network evidence exists for a mode, new DOM-only usernames are `dom-candidate` by default.
-- Promote DOM candidates only when the confirmed set is below the expected UI count, and only up to the missing count gap.
+- When exact capture exists, new DOM-only usernames remain candidates outside strict comparison.
+- Any DOM fallback is bounded by `accuracy-engine.js` and stays in assisted results; it cannot fill a short strict set.
 - Do not reset a collection set after DevTools/page-network payloads may have populated it.
 - Treat raw counts, provenance counts, and candidates as diagnostics. Final diff truth comes from compare counts and integrity status.
 - Use `console.log` for expected degraded states. Avoid `console.warn` when the message would create Chrome extension error-panel noise without a real runtime failure.
 
 ## 2026-06-07 Evidence Contract Addendum
 
-- Do not treat every recursive `username` field as confirmed evidence. Confirm usernames only from exact list endpoint responses and list-like member containers such as `users`, `items`, `edges`, or `nodes`.
+- Do not treat every recursive `username` field as confirmed evidence. Inspect `network-payload-parser.js` for exact endpoint/member classification and require the trusted capture source for strict evidence; container names alone are not proof.
 - Broad GraphQL/friendships/followers/following URL matches are candidate until response shape is explicitly recognized.
-- If confirmed network evidence arrives after DOM collection, demote earlier DOM-only confirmed accounts to candidates before final compare, then apply bounded fallback only for real expected-count shortfalls.
+- If exact capture arrives after DOM collection, reconcile earlier assisted accounts before comparison; no DOM/page-network-only user enters strict sets. Preserve already received valid capture when switching collection stages.
 - Start console interpretation from the trust gate, not raw/provenance counts.
 - For repeated accuracy failures, produce four artifacts: source research in `docs/REFERENCES.md`, project notes in `docs/HANDOFF.md`, implementation/backlog status in `docs/BACKLOG.md`, and a fixture/checklist item.
+
+## Scope and verification
+
+Owner: local project operator. This is an existing project-local instruction
+skill, not an execution grant. Keep its trigger unchanged. For review-only work,
+return findings and the proposed records in chat; the artifact rule above does
+not authorize writes. Live browser/account work and delegation require the
+active task's authority; do not introduce tools, request generation, or follow actions.
+
+Use [the scenario map](../../../docs/ACCURACY_EVAL_PLAN.md) and `npm test` for
+synthetic validation. If capture is pending, failed, interrupted, or stale, do
+not report confirmed completion. Preserve partial results and existing deferred
+features. Source and scoped rollback are recorded in `docs/REFERENCES.md`.

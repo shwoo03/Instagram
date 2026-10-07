@@ -1,2 +1,8 @@
 node_modules/
 tools/e2e/.build/
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+*.pyc

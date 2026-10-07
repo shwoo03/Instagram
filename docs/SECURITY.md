@@ -124,7 +124,94 @@ The Puppeteer e2e harness may create a copied extension under `tools/e2e/.build/
 
 ## 2026-06-06 Privacy and Harness Notes
 
-- Current extension permissions include `activeTab`, `scripting`, and `storage`; keep any future permission additions justified by a concrete collection/debugging need.
+- Historical permissions were `activeTab`, `scripting`, and `storage`. The later local-only Debugger adoption above also authorizes `debugger`; further additions still need a concrete decision.
 - DevTools capture and page-network bridge must continue to discard raw payloads after extracting derived usernames/counts/diagnostics.
-- Auto-assist may enable page-network bridge when DevTools is not connected, but it must not store cookies, auth headers, full request headers, private messages, or raw API responses.
+- Page-network auto-assist is currently off. If explicitly enabled in another task, it must still exclude cookies, auth headers, full request headers, private messages, and raw API responses.
 - Repo-local `.agents` skill/subagent files are allowed as non-runtime harness documentation. They must not become hidden automation that changes browser state or stores sensitive Instagram data.
+
+<!-- AI Project Kit refresh 2026-09-02 (kit ef3969d): block added by refresh; edit freely -->
+
+## Effective harness enforcement
+
+This file is guidance. The record below is a dated observation of one runnable
+surface, not a claim about the whole harness product. Instructions and settings
+alone do not prove that an action is stopped.
+
+Complete every field before calling project setup ready. Replace each
+placeholder with the observed value or, when it applies, `off`, `not applicable`,
+`not enforced`, `configured, not observed`, or `unknown`. Do not leave a field
+blank.
+
+```text
+selected harness: Codex current task session; Claude project instructions also exist but its execution settings were not observed
+runnable surface (CLI/IDE/desktop/cloud/remote): unknown - client surface/build not independently identified; local shell tools observed on macOS
+observed version/build or rolling-service observation date: 2026-09-19 session observation; exact client build unknown
+official enforcement references checked (docs/LINKS.md entry + date): official Codex permissions and config reference checked 2026-09-19; exact links are in docs/REFERENCES.md follow-up for the separate CLI trial below, not a parent-session enforcement claim
+policy owner: local project operator; host/organization policy ownership unknown
+settings file path: no project .codex/config.toml, .claude/settings.json, .claude/settings.local.json or .mcp.json; effective host settings path unknown
+filesystem scope (configured -> effective): session reports danger-full-access -> local reads/writes available; no filesystem sandbox claimed
+network scope (configured -> effective): session reports enabled -> public documentation read observed; domain restriction not tested
+command gating (configured -> effective): session reports approval policy never -> local tests executed without a confirmation; no human approval gate claimed
+unlisted tool/command behavior (allow/ask/deny/skip/unknown): unknown - only commands in this task were exercised
+credential exclusion (configured -> effective): project forbids access/storage of secrets -> no credential isolation test performed; not enforced by this document
+behavior when enforcement is unavailable or unsupported: unknown at host level; project instruction is to stop an action that needs missing authority, not try another access path
+no-approver behavior (not applicable for interactive-only): current session reports never; missing user authority is not granted by that setting; unattended behavior unknown
+model/telemetry/trace egress (data classes, destination, retention; off/unknown): unknown - provider retention and host telemetry not audited; no private Instagram artifacts supplied by this refresh
+organization-enforced floor: unknown - managed policy not inspected
+effective deny evidence (tested path only): parent session not enforced; separate CLI 0.154.0 trial below denied command networking but failed the declared file read/write restrictions
+last verified: 2026-09-19 (record and scoped observations only)
+```
+
+Effective deny evidence names the surface and version or observation date, the
+tested tool or execution path, a harmless attempted action, the expected and
+observed results, and a sanitized artifact locator when one exists. It proves
+only that tested path. When no safe observation is possible, record
+`configured, not observed`; do not call the boundary enforced.
+
+### Separate CLI denial trial — 2026-09-19
+
+The current author session still has full filesystem access. No persistent
+settings were changed. A separate `codex sandbox -P ig-review` invocation used
+CLI-only overrides: `:minimal` and the existing Python runtime readable, a
+synthetic temporary directory readable, one synthetic file denied, network off.
+This tests that specific execution path, not all Codex clients or permission modes.
+
+| Probe | Expected | Observed |
+| --- | --- | --- |
+| Read synthetic allowed file | Allowed | Allowed |
+| Read synthetic explicitly denied file | Denied | Unexpectedly allowed |
+| Create file in declared read-only temporary directory | Denied | Unexpectedly allowed |
+| Connect to an active local loopback listener | Denied | `EPERM`, errno 1; unsandboxed control connected |
+
+The first attempt used `/usr/bin/python3` and failed before probe execution
+because the configured CommandLineTools path lacked `xcrun`. A second attempt
+used the already installed Homebrew Python 3.14.7, adding its runtime read path
+while keeping the same test-file restrictions. No dependencies were installed.
+Both attempts are retained, not counted as two successful tests.
+
+Sanitized exact commands, overrides and results:
+`/private/tmp/instagram-kit-review-4snbwf_j/remaining/sandbox-probe.json` and
+`sandbox-probe-python.json`. The unexpected file access prevents using this
+configuration for the independent reviewer. Root cause is unassessed; do not
+generalize it to every permission profile. No reviewer or fresh-session behavior
+trial was started with it, and no credentials or real private files were probed.
+
+`codex login status` reported ChatGPT login; no model request was made for the
+blocked review. Authentication material stayed in the product credential store.
+Provider retention, telemetry and organization policy remain unknown. Command
+network denial does not prove those separate channels are disabled.
+
+## Third-party skills, plugins, and MCP servers
+
+- Record source, author, version or commit, and retrieval date before installing.
+- Read the full body and every bundled script, hook, and MCP entry.
+- Install project-local first; do not widen to user or plugin scope early.
+- Diff before every update and record the removal path.
+
+## Validation versus enforcement
+
+`npm test` is an explicitly invoked local check, not a mandatory merge gate.
+No project CI workflow or new hook was installed by this refresh. A test pass,
+complete adoption record, or review does not authorize browser/account actions,
+dependency installation, publishing, or broader access. Recheck this dated host
+record when switching clients, machines, permission settings, or execution paths.
