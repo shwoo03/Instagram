@@ -1,5 +1,21 @@
 # References
 
+## Crawl4AI preferred crawler candidate — 2026-10-03
+
+- URL: https://github.com/unclecode/crawl4ai
+- Adoption mode: `reference-only` until this project needs to collect public
+  web content; then `adapter`.
+- Why relevant: the AI Project Kit's preferred crawler (LLM-ready Markdown
+  output; the README claims a stealth mode for bot-protected sites). Source:
+  `../../AI_architecture/references/community-ai-systems.md`, checked 2026-10-03.
+- Status: not installed; no dependency or code change.
+- When adopting: copy
+  `../../AI_architecture/examples/reference-decisions/crawl4ai-adapter.md`,
+  pin 0.9.4 or a later patched release, and use it as a Python library. The Docker server and MCP endpoint are a
+  separate decision; past critical RCE and high SSRF advisories were mostly in
+  that path.
+- Recheck when: this project starts crawling, or a new Crawl4AI advisory appears.
+
 ## Live overcount follow-up — 2026-09-25
 
 - Live observation, owner-authorized: followers endpoint pages include `has_more` and `next_max_id`; last page lacks the cursor with `has_more: false`. 285 unique listed vs 284 displayed after reload. Decision: accept a small overcount only with exact CDP evidence and proven terminal pagination; larger or unproven overcounts stay partial. Recheck if Instagram changes the page shape or the gap grows.
@@ -31,6 +47,7 @@
 - `run-diagnostics.js` is a small shared sanitizer/presenter using existing JavaScript/Chrome session messaging. It accepts only two list modes, eight fixed failure categories, bounded counts and a numeric deadline; arbitrary keys/text are discarded. No external library or new permission is needed for these finite fields. Existing `schemaVersion: 1` records without diagnostics normalize to empty diagnostics; no migration or retained history is introduced.
 - Failure codes and counts are additive to the existing completion guards. Exact/assisted membership and capture failure eligibility remain unchanged. A parse failure is not proof that Instagram changed its format.
 - Verification and fixed review scope: latest `docs/HANDOFF.md` entry. Rollback only this task's runtime/test files and newly added documentation sections after checking for drift; preserve all pre-existing uncommitted kit edits. No dependency/manifest changes or commit.
+
 
 ## Remaining-work follow-up — 2026-09-19
 
